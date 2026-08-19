@@ -17,6 +17,33 @@ QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ター
 - Qwen3 Thinkingは既定OFF。UI/APIからOFF / ON / passthroughを切替可能
 - GitHub ActionsでQPKGを自動生成
 
+## Voice Pipeline（開発中）
+
+M5GOなどのクライアントは録音・簡易VAD/ボタン・音声再生だけを担当し、QNAP側で **ASR → LLM → TTS** を一括処理する構成を採用します。
+
+```text
+M5GO audio
+   ↓
+SenseVoiceSmall INT8 (ASR, ja)
+   ↓
+Qwen3-0.6B (LLM)
+   ↓
+Supertonic 3 INT8 (TTS, ja)
+   ↓
+M5GO speaker
+```
+
+設計・ベンチ基準・API計画は [`docs/VOICE_PIPELINE.md`](docs/VOICE_PIPELINE.md) を参照してください。
+
+予定API:
+
+```text
+POST /v1/audio/transcriptions
+POST /v1/audio/speech
+POST /v1/voice/chat
+WS   /v1/voice/stream   # phase 2
+```
+
 ## 保存先
 
 デフォルトモデル: `/share/Public/Qwen3-0.6B-Q8_0.gguf`
