@@ -45,6 +45,7 @@ func main() {
 	mux.HandleFunc("/api/voice/stop", m.handleVoiceAction)
 	mux.HandleFunc("/api/voice/restart", m.handleVoiceAction)
 	mux.HandleFunc("/api/voice/models/download", m.handleVoiceModelDownload)
+	mux.HandleFunc("/api/voice/piper/download", m.handlePiperDownload)
 	mux.HandleFunc("/v1/audio/transcriptions", m.handleVoiceProxy("/asr"))
 	mux.HandleFunc("/v1/audio/speech", m.handleVoiceProxy("/tts"))
 	mux.HandleFunc("/v1/voice/chat", m.handleVoiceChat)

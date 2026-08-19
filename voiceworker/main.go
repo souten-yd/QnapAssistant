@@ -28,10 +28,22 @@ func main() {
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{
-			"ok": true, "asr_model_ready": e.asrFilesReady(), "tts_model_ready": e.ttsFilesReady(),
-			"asr_loaded": e.asr != nil, "tts_loaded": e.tts != nil,
-			"asr_threads": cfg.ASRThreads, "tts_threads": cfg.TTSThreads, "tts_steps": cfg.TTSSteps,
-			"asr_model_dir": cfg.ASRModelDir, "tts_model_dir": cfg.TTSModelDir,
+			"ok":                     true,
+			"asr_model_ready":        e.asrFilesReady(),
+			"supertonic_model_ready": e.supertonicFilesReady(),
+			"piper_runtime_ready":    e.piperRuntimeReady(),
+			"piper_model_ready":      e.piperModelReady(),
+			"asr_loaded":             e.asr != nil,
+			"tts_loaded":             e.tts != nil,
+			"asr_threads":            cfg.ASRThreads,
+			"tts_threads":            cfg.TTSThreads,
+			"tts_steps":              cfg.TTSSteps,
+			"tts_backend":            cfg.TTSBackend,
+			"tts_fallback_backend":   cfg.TTSFallbackBackend,
+			"asr_model_dir":          cfg.ASRModelDir,
+			"tts_model_dir":          cfg.TTSModelDir,
+			"piper_runtime_dir":      cfg.PiperRuntimeDir,
+			"piper_model_dir":        cfg.PiperModelDir,
 		})
 	})
 	mux.HandleFunc("/asr", e.handleASR)
@@ -100,6 +112,7 @@ func (e *engine) handleTTS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("X-Qnap-TTS-Backend", result.Backend)
 	w.Header().Set("X-Qnap-Sample-Rate", strconv.Itoa(result.SampleRate))
 	w.Header().Set("X-Qnap-Audio-Seconds", fmt.Sprintf("%.3f", result.AudioSec))
 	w.Header().Set("X-Qnap-Processing-Ms", strconv.FormatInt(result.ProcessMS, 10))
@@ -111,12 +124,24 @@ func (e *engine) handleTTS(w http.ResponseWriter, r *http.Request) {
 func loadEngineConfig() engineConfig {
 	voiceDir := getenv("VOICE_DIR", "/share/Public/QnapAssistant/voice")
 	return engineConfig{
-		VoiceDir: voiceDir,
-		ASRModelDir: getenv("ASR_MODEL_DIR", filepath.Join(voiceDir, "sensevoice")),
-		TTSModelDir: getenv("TTS_MODEL_DIR", filepath.Join(voiceDir, "supertonic3")),
-		ASRLanguage: getenv("ASR_LANGUAGE", "ja"), TTSLanguage: getenv("TTS_LANGUAGE", "ja"),
-		ASRThreads: envInt("ASR_THREADS", 4), TTSThreads: envInt("TTS_THREADS", 2), TTSSteps: envInt("TTS_STEPS", 8),
-		TTSSpeed: envFloat("TTS_SPEED", 1.0), TTSSid: envInt("TTS_SID", 0),
+		VoiceDir:           voiceDir,
+		ASRModelDir:        getenv("ASR_MODEL_DIR", filepath.Join(voiceDir, "sensevoice")),
+		TTSModelDir:        getenv("TTS_MODEL_DIR", filepath.Join(voiceDir, "supertonic3")),
+		ASRLanguage:        getenv("ASR_LANGUAGE", "ja"),
+		TTSLanguage:        getenv("TTS_LANGUAGE", "ja"),
+		ASRThreads:         envInt("ASR_THREADS", 4),
+		TTSThreads:         envInt("TTS_THREADS", 2),
+		TTSSteps:           envInt("TTS_STEPS", 4),
+		TTSSpeed:           envFloat("TTS_SPEED", 1.0),
+		TTSSid:             envInt("TTS_SID", 0),
+		TTSBackend:         getenv("TTS_BACKEND", "supertonic"),
+		TTSFallbackBackend: getenv("TTS_FALLBACK_BACKEND", "supertonic"),
+		PiperRuntimeDir:    getenv("PIPER_RUNTIME_DIR", filepath.Join(voiceDir, "piper-plus-runtime")),
+		PiperModelDir:      getenv("PIPER_MODEL_DIR", filepath.Join(voiceDir, "piper-plus-tsukuyomi")),
+		PiperModelFile:     getenv("PIPER_MODEL_FILE", "tsukuyomi-chan-6lang-fp16.onnx"),
+		PiperConfigFile:    getenv("PIPER_CONFIG_FILE", "config.json"),
+		PiperNoiseScale:    envFloat("PIPER_NOISE_SCALE", 0.5),
+		PiperLengthScale:   envFloat("PIPER_LENGTH_SCALE", 1.0),
 	}
 }
 

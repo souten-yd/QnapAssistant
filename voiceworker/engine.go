@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,16 +14,24 @@ import (
 )
 
 type engineConfig struct {
-	VoiceDir    string
-	ASRModelDir string
-	TTSModelDir string
-	ASRLanguage string
-	TTSLanguage string
-	ASRThreads  int
-	TTSThreads  int
-	TTSSteps    int
-	TTSSpeed    float32
-	TTSSid      int
+	VoiceDir           string
+	ASRModelDir        string
+	TTSModelDir        string
+	ASRLanguage        string
+	TTSLanguage        string
+	ASRThreads         int
+	TTSThreads         int
+	TTSSteps           int
+	TTSSpeed           float32
+	TTSSid             int
+	TTSBackend         string
+	TTSFallbackBackend string
+	PiperRuntimeDir    string
+	PiperModelDir      string
+	PiperModelFile     string
+	PiperConfigFile    string
+	PiperNoiseScale    float32
+	PiperLengthScale   float32
 }
 
 type engine struct {
@@ -35,6 +44,8 @@ type engine struct {
 	ttsLoadMu sync.Mutex
 	ttsRunMu  sync.Mutex
 	tts       *sherpa.OfflineTts
+
+	piperRunMu sync.Mutex
 }
 
 type asrResult struct {
@@ -48,11 +59,12 @@ type asrResult struct {
 }
 
 type ttsOptions struct {
-	Text  string  `json:"text"`
-	Lang  string  `json:"lang,omitempty"`
-	Speed float32 `json:"speed,omitempty"`
-	Steps int     `json:"steps,omitempty"`
-	Sid   int     `json:"sid,omitempty"`
+	Text    string  `json:"text"`
+	Lang    string  `json:"lang,omitempty"`
+	Speed   float32 `json:"speed,omitempty"`
+	Steps   int     `json:"steps,omitempty"`
+	Sid     int     `json:"sid,omitempty"`
+	Backend string  `json:"backend,omitempty"`
 }
 
 type ttsResult struct {
@@ -61,13 +73,14 @@ type ttsResult struct {
 	AudioSec   float64
 	ProcessMS  int64
 	RTF        float64
+	Backend    string
 }
 
 func (e *engine) asrFilesReady() bool {
 	return fileOK(filepath.Join(e.cfg.ASRModelDir, "model.int8.onnx"), 10<<20) && fileOK(filepath.Join(e.cfg.ASRModelDir, "tokens.txt"), 1024)
 }
 
-func (e *engine) ttsFilesReady() bool {
+func (e *engine) supertonicFilesReady() bool {
 	names := []string{"duration_predictor.int8.onnx", "text_encoder.int8.onnx", "vector_estimator.int8.onnx", "vocoder.int8.onnx", "tts.json", "unicode_indexer.bin", "voice.bin"}
 	for _, name := range names {
 		if !fileOK(filepath.Join(e.cfg.TTSModelDir, name), 1) {
@@ -140,13 +153,13 @@ func (e *engine) recognize(a pcmAudio) (asrResult, error) {
 	return out, nil
 }
 
-func (e *engine) ensureTTS() error {
+func (e *engine) ensureSupertonic() error {
 	e.ttsLoadMu.Lock()
 	defer e.ttsLoadMu.Unlock()
 	if e.tts != nil {
 		return nil
 	}
-	if !e.ttsFilesReady() {
+	if !e.supertonicFilesReady() {
 		return fmt.Errorf("Supertonic 3 model is not installed under %s", e.cfg.TTSModelDir)
 	}
 	d := e.cfg.TTSModelDir
@@ -168,11 +181,59 @@ func (e *engine) ensureTTS() error {
 	return nil
 }
 
+func normalizeTTSBackend(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "piper", "piper_plus", "piper-plus":
+		return "piper_plus"
+	case "supertonic", "supertonic3", "supertonic_3":
+		return "supertonic"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
 func (e *engine) synthesize(o ttsOptions) (ttsResult, error) {
 	if o.Text == "" {
 		return ttsResult{}, errors.New("text is required")
 	}
-	if err := e.ensureTTS(); err != nil {
+	explicit := strings.TrimSpace(o.Backend) != ""
+	backend := normalizeTTSBackend(o.Backend)
+	if backend == "" {
+		backend = normalizeTTSBackend(e.cfg.TTSBackend)
+	}
+	if backend == "" {
+		backend = "supertonic"
+	}
+
+	out, err := e.synthesizeBackend(backend, o)
+	if err == nil || explicit {
+		return out, err
+	}
+	fallback := normalizeTTSBackend(e.cfg.TTSFallbackBackend)
+	if fallback == "" || fallback == backend {
+		return out, err
+	}
+	fallbackOut, fallbackErr := e.synthesizeBackend(fallback, o)
+	if fallbackErr == nil {
+		fallbackOut.Backend = fallback + "-fallback"
+		return fallbackOut, nil
+	}
+	return ttsResult{}, fmt.Errorf("%s failed: %v; fallback %s failed: %w", backend, err, fallback, fallbackErr)
+}
+
+func (e *engine) synthesizeBackend(backend string, o ttsOptions) (ttsResult, error) {
+	switch backend {
+	case "piper_plus":
+		return e.synthesizePiper(o)
+	case "supertonic":
+		return e.synthesizeSupertonic(o)
+	default:
+		return ttsResult{}, fmt.Errorf("unsupported TTS backend %q", backend)
+	}
+}
+
+func (e *engine) synthesizeSupertonic(o ttsOptions) (ttsResult, error) {
+	if err := e.ensureSupertonic(); err != nil {
 		return ttsResult{}, err
 	}
 	lang := o.Lang
@@ -199,7 +260,10 @@ func (e *engine) synthesize(o ttsOptions) (ttsResult, error) {
 		return ttsResult{}, errors.New("TTS generation failed")
 	}
 	sec := float64(len(audio.Samples)) / float64(audio.SampleRate)
-	out := ttsResult{WAV: encodeWAV(audio.Samples, audio.SampleRate), SampleRate: audio.SampleRate, AudioSec: sec, ProcessMS: elapsed.Milliseconds()}
+	out := ttsResult{
+		WAV: encodeWAV(audio.Samples, audio.SampleRate), SampleRate: audio.SampleRate,
+		AudioSec: sec, ProcessMS: elapsed.Milliseconds(), Backend: "supertonic",
+	}
 	if sec > 0 {
 		out.RTF = elapsed.Seconds() / sec
 	}
