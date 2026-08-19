@@ -33,7 +33,11 @@ func loadConfig(path string) (config, error) {
 }
 
 func saveConfig(path string, c config) error {
-	order := []string{"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES", "ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS"}
+	order := []string{
+		"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES",
+		"ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS",
+		"VOICE_PORT", "VOICE_DIR", "ASR_MODEL_DIR", "TTS_MODEL_DIR", "ASR_LANGUAGE", "TTS_LANGUAGE", "ASR_THREADS", "TTS_THREADS", "TTS_STEPS", "TTS_SPEED", "TTS_SID", "VOICE_MAX_TOKENS",
+	}
 	var b strings.Builder
 	b.WriteString("# QnapAssistant persistent configuration\n")
 	for _, k := range order {
@@ -62,6 +66,9 @@ func defaults(c config) config {
 		"MIN_MODEL_BYTES": "100000000", "ADMIN_PORT": "11435", "BACKEND_PORT": "11436",
 		"THREADS": "4", "THREADS_BATCH": "4", "CONTEXT": "4096", "BATCH": "256", "UBATCH": "128", "PARALLEL": "1",
 		"THINKING_MODE": "off", "IDLE_TIMEOUT_SECONDS": "300", "EXTRA_ARGS": "",
+		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
+		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
+		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "8", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
 	}
 	for k, v := range defs {
 		if _, ok := c[k]; !ok {
@@ -77,7 +84,6 @@ func get(c config, k, d string) string {
 	}
 	return d
 }
-
 func intVal(c config, k string, d int) int {
 	n, err := strconv.Atoi(get(c, k, ""))
 	if err != nil {

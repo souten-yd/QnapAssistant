@@ -15,11 +15,7 @@ import (
 const defaultConfigPath = "/share/Public/QnapAssistant/config.env"
 
 func main() {
-	// QNAP services may be launched from an SSH/session-backed shell during
-	// diagnostics. Ignore SIGHUP so closing that shell does not terminate the
-	// management daemon. QTS stop/restart still uses SIGTERM below.
 	signal.Ignore(syscall.SIGHUP)
-
 	qpkgDir := os.Getenv("QPKG_DIR")
 	if qpkgDir == "" {
 		exe, _ := os.Executable()
@@ -44,6 +40,13 @@ func main() {
 	mux.HandleFunc("/api/llm/start", m.handleLLMStart)
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
+	mux.HandleFunc("/api/voice/status", m.handleVoiceStatus)
+	mux.HandleFunc("/api/voice/start", m.handleVoiceAction)
+	mux.HandleFunc("/api/voice/stop", m.handleVoiceAction)
+	mux.HandleFunc("/api/voice/restart", m.handleVoiceAction)
+	mux.HandleFunc("/v1/audio/transcriptions", m.handleVoiceProxy("/asr"))
+	mux.HandleFunc("/v1/audio/speech", m.handleVoiceProxy("/tts"))
+	mux.HandleFunc("/v1/voice/chat", m.handleVoiceChat)
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
@@ -60,7 +63,8 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
-	log.Printf("shutting down; unloading LLM")
+	log.Printf("shutting down; unloading voice worker and LLM")
+	_ = m.stopVoiceWorker()
 	_ = m.stopBackend()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -70,7 +74,7 @@ func main() {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
