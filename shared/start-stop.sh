@@ -4,8 +4,8 @@ set -u
 QPKG_NAME="QnapAssistant"
 QPKG_CONF="/etc/config/qpkg.conf"
 QPKG_DIR=$(/sbin/getcfg "$QPKG_NAME" Install_Path -f "$QPKG_CONF")
-PID_FILE="$QPKG_DIR/qnapassistant.pid"
 DATA_DIR="/share/Public/QnapAssistant"
+PID_FILE="$DATA_DIR/qnapassistant.pid"
 CONFIG_FILE="$DATA_DIR/config.env"
 DEFAULT_CONFIG="$QPKG_DIR/config.env.default"
 LOG_FILE="$DATA_DIR/admin.log"
@@ -44,10 +44,8 @@ start_service() {
     prepare_data
     cd "$QPKG_DIR" || return 1
 
-    # QTS/BusyBox installations do not always provide `nohup`.  This service
-    # already redirects all standard streams, so a plain non-interactive
-    # background launch is sufficient and avoids an optional coreutils
-    # dependency on the NAS.
+    # QTS/BusyBox installations do not always provide `nohup`. The Go daemon
+    # ignores SIGHUP itself, and all standard streams are detached here.
     QPKG_DIR="$QPKG_DIR" QNAP_ASSISTANT_CONFIG="$CONFIG_FILE" \
         "$SERVER" </dev/null >>"$LOG_FILE" 2>&1 &
     PID=$!
