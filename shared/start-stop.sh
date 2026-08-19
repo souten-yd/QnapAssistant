@@ -43,8 +43,13 @@ start_service() {
 
     prepare_data
     cd "$QPKG_DIR" || return 1
+
+    # QTS/BusyBox installations do not always provide `nohup`.  This service
+    # already redirects all standard streams, so a plain non-interactive
+    # background launch is sufficient and avoids an optional coreutils
+    # dependency on the NAS.
     QPKG_DIR="$QPKG_DIR" QNAP_ASSISTANT_CONFIG="$CONFIG_FILE" \
-        nohup "$SERVER" >>"$LOG_FILE" 2>&1 &
+        "$SERVER" </dev/null >>"$LOG_FILE" 2>&1 &
     PID=$!
     echo "$PID" > "$PID_FILE"
     sleep 1
