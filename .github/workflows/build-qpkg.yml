@@ -4,8 +4,16 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["README.md", "docs/**"]
   pull_request:
+    paths-ignore: ["README.md", "docs/**"]
   workflow_dispatch:
+    inputs:
+      allow_llama_rebuild:
+        description: "Rebuild pinned llama.cpp only if runtime cache/baseline is unavailable"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: qpkg-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -13,44 +21,81 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   LLAMA_CPP_COMMIT: 6d05498314db1b57f81c271080018aa2d0b89be9
   QDK_COMMIT: 78c77b898fecba8f860b630177248b5fa3f5baaf
+  BASELINE_QPKG_RUN: "32223913831"
+  RUNTIME_CACHE_VERSION: "ts253be-sse42-static-v1"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install QPKG build dependencies
+      - name: Cancel obsolete QPKG runs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git fakeroot rsync bsdextrautils pv xz-utils \
-            openssl curl file ca-certificates
+          for run_id in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=50" --jq '.workflow_runs[] | select(.name == "Build QNAP QPKG" and (.status == "queued" or .status == "in_progress")) | .id'); do
+            if [ "$run_id" != "$GITHUB_RUN_ID" ]; then
+              echo "Cancelling obsolete QPKG run $run_id"
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
+            fi
+          done
 
-      - name: Validate package sources
-        run: ./scripts/validate.sh
+      - name: Restore pinned llama runtime
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            x86_64/bin/llama-server
+            x86_64/bin/llama-bench
+          key: llama-${{ env.RUNTIME_CACHE_VERSION }}-${{ env.LLAMA_CPP_COMMIT }}
 
-      - name: Build static llama.cpp binaries for TS-253Be
+      - name: Reuse verified llama runtime from baseline QPKG
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        id: baseline
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          docker run --rm \
-            -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" \
-            -v "$PWD:/work" -w /work alpine:3.22 \
+          rm -rf .bootstrap
+          mkdir -p .bootstrap
+          gh run download "$BASELINE_QPKG_RUN" -n QnapAssistant-x86_64 -D .bootstrap
+          ./scripts/bootstrap-llama-from-qpkg.sh .bootstrap
+
+      - name: Rebuild llama runtime only when explicitly allowed
+        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild == true
+        run: |
+          docker run --rm -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" -v "$PWD:/work" -w /work alpine:3.22 \
             sh -lc 'apk add --no-cache bash build-base cmake ninja git linux-headers file && ./scripts/build-llama.sh'
 
-      - name: Inspect binary compatibility
+      - name: Refuse unexpected expensive rebuild
+        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild != true
         run: |
-          file x86_64/bin/llama-server x86_64/bin/llama-bench
-          readelf -h x86_64/bin/llama-server
+          echo "Pinned llama runtime cache/baseline unavailable." >&2
+          echo "Failing fast instead of starting an expensive rebuild." >&2
+          echo "Use workflow_dispatch with allow_llama_rebuild=true only when intentionally refreshing the runtime." >&2
+          exit 1
+
+      - name: Build lightweight management API
+        run: |
+          mkdir -p x86_64/bin
+          cd admin
+          CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o ../x86_64/bin/qnap-assistant .
+
+      - name: Validate sources and runtime compatibility
+        run: |
+          ./scripts/validate.sh
+          strip x86_64/bin/llama-server x86_64/bin/llama-bench || true
+          file x86_64/bin/qnap-assistant x86_64/bin/llama-server x86_64/bin/llama-bench
           if ldd x86_64/bin/llama-server 2>&1 | grep -vqE 'not a dynamic executable|statically linked'; then
             echo "llama-server is unexpectedly dynamically linked" >&2
-            ldd x86_64/bin/llama-server || true
             exit 1
           fi
           if objdump -d x86_64/bin/llama-server | grep -E '\b(ymm[0-9]+|zmm[0-9]+)\b' -m 1; then

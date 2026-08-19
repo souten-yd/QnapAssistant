@@ -1,23 +1,30 @@
 # Architecture
 
-## Runtime flow
+## Runtime
 
-1. QTS App Center invokes `start-stop.sh start`.
-2. The service creates/loads persistent `/share/Public/QnapAssistant/config.env`.
-3. If `/share/Public/Qwen3-0.6B-Q8_0.gguf` does not exist, `download-model.sh` fetches it atomically to a `.part` file and renames it after success.
-4. `llama-server` starts on port 11435 with four CPU threads.
-5. The built-in llama.cpp Web UI and OpenAI-compatible `/v1` API are exposed directly.
-6. PID is stored inside the QPKG directory; logs are persistent under `/share/Public/QnapAssistant/`.
+QnapAssistantは2層です。
+
+1. `qnap-assistant`: 静的Go管理サーバー。QPKG有効中は常駐。
+2. `llama-server`: 重い推論プロセス。必要時だけ起動し、idle timeout後に停止。
+
+公開ポートは11435です。`llama-server` は `127.0.0.1:11436` のみにbindし、管理サーバーが `/v1/*` をproxyします。
+
+## Idle unload
+
+管理サーバーはactive request数と最終完了時刻を追跡します。リクエスト処理中はアンロードせず、`IDLE_TIMEOUT_SECONDS` を超えた場合のみllama-serverのprocess groupを停止してRAMを解放します。次回 `/v1/*` 要求時は再起動し、`/health` がreadyになるまで待ってから転送します。
 
 ## Persistence
 
-The model is deliberately outside the QPKG installation directory. Reinstalling or upgrading the QPKG therefore does not force a 639MB model download. Uninstalling QnapAssistant also leaves the model in Public so deletion remains an explicit user action.
+- Default model: `/share/Public/Qwen3-0.6B-Q8_0.gguf`
+- Model directory: `/share/Public`
+- Config: `/share/Public/QnapAssistant/config.env`
+- Manager log: `/share/Public/QnapAssistant/admin.log`
+- llama-server log: `/share/Public/QnapAssistant/llama-server.log`
 
-## Build reproducibility
+## Management API
 
-- llama.cpp is pinned to a commit SHA.
-- QNAP QDK is pinned to a commit SHA.
-- `GGML_NATIVE=OFF` prevents GitHub runner CPU capabilities leaking into the target binary.
-- AVX-family features unavailable on the target are explicitly disabled.
-- Action validation scans the emitted executable for AVX-family vector mnemonics before packaging.
-- llama.cpp is built as a static musl executable in Alpine Linux, avoiding QTS glibc version coupling.
+組込みWeb UIは、status/system memory、設定、ログ、GGUF一覧・選択・URLダウンロード、LLM load/unload/restartを管理API経由で操作します。
+
+## Build strategy
+
+高コストなllama.cpp runtimeはcommit SHAとTS-253Be向けflagsをkeyにActions cacheします。cache missは検証済みbaseline QPKGから復元し、通常CIで同じllama.cppを再コンパイルしません。fresh buildは明示的なworkflow_dispatchでのみ許可します。Go管理サーバーだけは毎回数秒で静的buildし、QDK gzipでQPKG化します。

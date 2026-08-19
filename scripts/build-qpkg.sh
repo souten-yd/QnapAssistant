@@ -8,36 +8,20 @@ DIST="$ROOT/dist"
 
 rm -rf "$ROOT/.qdk" "$DIST" "$ROOT/build"
 mkdir -p "$ROOT/.qdk" "$DIST"
-
-git clone --filter=blob:none https://github.com/qnap-dev/QDK.git "$QDK"
-git -C "$QDK" checkout --detach "$QDK_COMMIT"
-
-# QDK's source-tree qdk.conf assumes its repository itself is installed as
-# a directory named QDK. In CI we run qbuild directly from shared/bin, so
-# replace that development default with the actual runtime path.
+git clone --quiet --filter=blob:none https://github.com/qnap-dev/QDK.git "$QDK"
+git -C "$QDK" checkout --quiet --detach "$QDK_COMMIT"
 cat > "$QDK/shared/qdk.conf" <<EOF
 QDK_VERSION=2.5.3
 QDK_PATH="$QDK/shared"
 EOF
-
-# qbuild uses qpkg_encrypt when it is not running on a QNAP NAS.
-make -C "$QDK/src"
+make -s -C "$QDK/src"
 export PATH="$QDK/src/bin:$PATH"
 
-# QDK/tar preserves source permissions, so make all package entry points
-# explicitly executable before the payload is assembled.
-chmod +x \
-  "$ROOT/shared/start-stop.sh" \
-  "$ROOT/shared/download-model.sh" \
-  "$ROOT/shared/launch.sh" \
-  "$ROOT/shared/benchmark.sh"
-chmod +x "$QDK/shared/bin/qbuild"
+chmod +x "$ROOT/shared/start-stop.sh" "$ROOT/shared/download-model.sh" "$ROOT/shared/benchmark.sh" \
+  "$ROOT/x86_64/bin/qnap-assistant" "$ROOT/x86_64/bin/llama-server" "$ROOT/x86_64/bin/llama-bench" \
+  "$QDK/shared/bin/qbuild"
 
-QDK_PATH="$QDK/shared" \
-  "$QDK/shared/bin/qbuild" \
-  --root "$ROOT" \
-  --build-dir "$ROOT/build" \
-  --xz amd64
+QDK_PATH="$QDK/shared" "$QDK/shared/bin/qbuild" --root "$ROOT" --build-dir "$ROOT/build" --gzip
 
 find "$ROOT/build" -maxdepth 2 -type f -name '*.qpkg' -print -exec cp {} "$DIST/" \;
 QPKG=$(find "$DIST" -maxdepth 1 -type f -name '*.qpkg' | head -n 1)
@@ -45,6 +29,5 @@ if [ -z "$QPKG" ]; then
   echo "QPKG was not produced" >&2
   exit 1
 fi
-
 sha256sum "$QPKG" > "$QPKG.sha256"
 ls -lh "$QPKG" "$QPKG.sha256"

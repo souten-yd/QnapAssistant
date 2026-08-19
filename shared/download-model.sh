@@ -5,7 +5,7 @@ CONFIG_FILE="${1:-/share/Public/QnapAssistant/config.env}"
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
 
 : "${MODEL_PATH:=/share/Public/Qwen3-0.6B-Q8_0.gguf}"
-: "${MODEL_URL:=https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf?download=true}"
+: "${MODEL_URL:=https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1eaf4d9657fe65ad10a51eab76a8db5b363bddaa/Qwen3-0.6B-Q8_0.gguf?download=true}"
 : "${MODEL_SHA256:=9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031}"
 : "${MIN_MODEL_BYTES:=100000000}"
 
@@ -18,7 +18,6 @@ verify_model() {
     [ -s "$FILE" ] || return 1
     SIZE=$(size_of "$FILE")
     [ "$SIZE" -ge "$MIN_MODEL_BYTES" ] || return 1
-
     if [ -n "$MODEL_SHA256" ] && command -v sha256sum >/dev/null 2>&1; then
         ACTUAL_SHA256=$(sha256sum "$FILE" | awk '{print $1}')
         if [ "$ACTUAL_SHA256" != "$MODEL_SHA256" ]; then
@@ -34,10 +33,6 @@ verify_model() {
 if verify_model "$MODEL_PATH"; then
     echo "Model already exists and passed validation: $MODEL_PATH"
     exit 0
-fi
-
-if [ -s "$MODEL_PATH" ]; then
-    echo "Existing model did not pass validation; a verified replacement will be downloaded." >&2
 fi
 
 MODEL_DIR=$(dirname "$MODEL_PATH")
