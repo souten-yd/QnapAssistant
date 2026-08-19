@@ -15,6 +15,11 @@ import (
 const defaultConfigPath = "/share/Public/QnapAssistant/config.env"
 
 func main() {
+	// QNAP services may be launched from an SSH/session-backed shell during
+	// diagnostics. Ignore SIGHUP so closing that shell does not terminate the
+	// management daemon. QTS stop/restart still uses SIGTERM below.
+	signal.Ignore(syscall.SIGHUP)
+
 	qpkgDir := os.Getenv("QPKG_DIR")
 	if qpkgDir == "" {
 		exe, _ := os.Executable()
