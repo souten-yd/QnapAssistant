@@ -79,3 +79,8 @@ if ldd "$ROOT/x86_64/bin/qnap-voice-worker" 2>&1 | grep -vqE 'not a dynamic exec
   echo "qnap-voice-worker is unexpectedly dynamically linked" >&2
   exit 1
 fi
+
+# Stage a private modern glibc/libstdc++ userspace for the official Piper Plus
+# Linux binary. QTS itself is never modified; only the Piper child process is
+# launched through this isolated loader.
+"$ROOT/scripts/stage-piper-qts-compat.sh"

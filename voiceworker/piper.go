@@ -49,6 +49,43 @@ func findWorkerPiperExecutable(runtimeDir string) (string, error) {
 	return found, err
 }
 
+func defaultPiperCompatDir() string {
+	if v := strings.TrimSpace(os.Getenv("PIPER_COMPAT_DIR")); v != "" {
+		return v
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	// qnap-voice-worker is installed at <QPKG_DIR>/bin/qnap-voice-worker.
+	return filepath.Join(filepath.Dir(filepath.Dir(exe)), "piper-compat")
+}
+
+func piperCompatRuntime() (loader, libDir string, ok bool) {
+	dir := defaultPiperCompatDir()
+	if dir == "" {
+		return "", "", false
+	}
+	loader = filepath.Join(dir, "ld-linux-x86-64.so.2")
+	libDir = filepath.Join(dir, "lib")
+	st, err := os.Stat(loader)
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return "", "", false
+	}
+	if st, err = os.Stat(filepath.Join(libDir, "libc.so.6")); err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return "", "", false
+	}
+	if st, err = os.Stat(filepath.Join(libDir, "libstdc++.so.6")); err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return "", "", false
+	}
+	return loader, libDir, true
+}
+
+func (e *engine) piperCompatReady() bool {
+	_, _, ok := piperCompatRuntime()
+	return ok
+}
+
 func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 	if !e.piperModelReady() {
 		return ttsResult{}, fmt.Errorf("Piper Plus Tsukuyomi model is not installed under %s", e.cfg.PiperModelDir)
@@ -104,24 +141,54 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 	e.piperRunMu.Lock()
 	defer e.piperRunMu.Unlock()
 
-	started := time.Now()
-	cmd := exec.Command(exe, args...)
 	runtimeRoot := filepath.Dir(filepath.Dir(exe))
-	cmd.Dir = runtimeRoot
-	libDir := filepath.Join(runtimeRoot, "lib")
-	ld := libDir
-	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
-		ld += ":" + existing
+	runtimeLib := filepath.Join(runtimeRoot, "lib")
+	loader, compatLib, useCompat := piperCompatRuntime()
+
+	var cmd *exec.Cmd
+	if useCompat {
+		// The QTS base system on TS-253Be ships a much older glibc/libstdc++ than
+		// the official Piper Plus v1.13.0 Linux binary requires. Execute Piper
+		// through an isolated loader bundled in the QPKG instead of changing QTS.
+		launchArgs := []string{"--library-path", compatLib + ":" + runtimeLib, exe}
+		launchArgs = append(launchArgs, args...)
+		cmd = exec.Command(loader, launchArgs...)
+	} else {
+		cmd = exec.Command(exe, args...)
 	}
-	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+ld)
+	cmd.Dir = runtimeRoot
+
+	// Keep any first-run OpenJTalk dictionary download persistent and writable
+	// under the voice data directory. The manager/worker runs as the QTS service
+	// user, so this avoids normal-SSH-user permission issues.
+	piperData := filepath.Join(e.cfg.VoiceDir, "piper-data")
+	_ = os.MkdirAll(piperData, 0755)
+	env := append(os.Environ(),
+		"XDG_DATA_HOME="+piperData,
+		"PIPER_PLUS_AUTO_DOWNLOAD_DICT=1",
+	)
+	if !useCompat {
+		ld := runtimeLib
+		if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
+			ld += ":" + existing
+		}
+		env = append(env, "LD_LIBRARY_PATH="+ld)
+	}
+	cmd.Env = env
+
+	started := time.Now()
 	output, runErr := cmd.CombinedOutput()
 	elapsed := time.Since(started)
 	if runErr != nil {
 		msg := strings.TrimSpace(string(output))
-		if len(msg) > 1500 {
-			msg = msg[len(msg)-1500:]
+		if len(msg) > 2000 {
+			msg = msg[len(msg)-2000:]
 		}
-		return ttsResult{}, fmt.Errorf("Piper Plus failed: %w: %s", runErr, msg)
+		mode := "system-loader"
+		if useCompat {
+			mode = "qts-compat-loader"
+		}
+		return ttsResult{}, fmt.Errorf("Piper Plus failed (%s): %w: %s", mode, runErr, msg)
 	}
 
 	wav, err := os.ReadFile(tmpName)
