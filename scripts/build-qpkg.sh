@@ -24,7 +24,13 @@ EOF
 make -C "$QDK/src"
 export PATH="$QDK/src/bin:$PATH"
 
-chmod +x "$ROOT/shared/start-stop.sh" "$ROOT/shared/download-model.sh"
+# QDK/tar preserves source permissions, so make all package entry points
+# explicitly executable before the payload is assembled.
+chmod +x \
+  "$ROOT/shared/start-stop.sh" \
+  "$ROOT/shared/download-model.sh" \
+  "$ROOT/shared/launch.sh" \
+  "$ROOT/shared/benchmark.sh"
 chmod +x "$QDK/shared/bin/qbuild"
 
 QDK_PATH="$QDK/shared" \

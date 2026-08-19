@@ -6,15 +6,38 @@ CONFIG_FILE="${1:-/share/Public/QnapAssistant/config.env}"
 
 : "${MODEL_PATH:=/share/Public/Qwen3-0.6B-Q8_0.gguf}"
 : "${MODEL_URL:=https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf?download=true}"
+: "${MODEL_SHA256:=9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031}"
 : "${MIN_MODEL_BYTES:=100000000}"
 
 size_of() {
     wc -c < "$1" | tr -d ' '
 }
 
-if [ -s "$MODEL_PATH" ] && [ "$(size_of "$MODEL_PATH")" -ge "$MIN_MODEL_BYTES" ]; then
-    echo "Model already exists: $MODEL_PATH"
+verify_model() {
+    FILE="$1"
+    [ -s "$FILE" ] || return 1
+    SIZE=$(size_of "$FILE")
+    [ "$SIZE" -ge "$MIN_MODEL_BYTES" ] || return 1
+
+    if [ -n "$MODEL_SHA256" ] && command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SHA256=$(sha256sum "$FILE" | awk '{print $1}')
+        if [ "$ACTUAL_SHA256" != "$MODEL_SHA256" ]; then
+            echo "SHA-256 mismatch for $FILE" >&2
+            echo "expected: $MODEL_SHA256" >&2
+            echo "actual:   $ACTUAL_SHA256" >&2
+            return 1
+        fi
+    fi
+    return 0
+}
+
+if verify_model "$MODEL_PATH"; then
+    echo "Model already exists and passed validation: $MODEL_PATH"
     exit 0
+fi
+
+if [ -s "$MODEL_PATH" ]; then
+    echo "Existing model did not pass validation; a verified replacement will be downloaded." >&2
 fi
 
 MODEL_DIR=$(dirname "$MODEL_PATH")
@@ -31,11 +54,12 @@ else
     exit 1
 fi
 
-SIZE=$(size_of "$TMP_PATH")
-if [ "$SIZE" -lt "$MIN_MODEL_BYTES" ]; then
-    echo "Downloaded file is unexpectedly small ($SIZE bytes); keeping partial file for inspection." >&2
+if ! verify_model "$TMP_PATH"; then
+    SIZE=$(size_of "$TMP_PATH" 2>/dev/null || echo 0)
+    echo "Downloaded model failed validation ($SIZE bytes); keeping $TMP_PATH for inspection." >&2
     exit 1
 fi
 
+SIZE=$(size_of "$TMP_PATH")
 mv "$TMP_PATH" "$MODEL_PATH"
-printf 'Model downloaded to %s (%s bytes)\n' "$MODEL_PATH" "$SIZE"
+printf 'Model downloaded and verified at %s (%s bytes)\n' "$MODEL_PATH" "$SIZE"
