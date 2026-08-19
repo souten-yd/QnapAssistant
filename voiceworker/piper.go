@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const workerOpenJTalkDirName = "open_jtalk_dic_utf_8-1.11"
+
 func (e *engine) piperModelReady() bool {
 	return fileOK(filepath.Join(e.cfg.PiperModelDir, e.cfg.PiperModelFile), 10<<20) &&
 		fileOK(filepath.Join(e.cfg.PiperModelDir, e.cfg.PiperConfigFile), 1024)
@@ -18,6 +20,32 @@ func (e *engine) piperModelReady() bool {
 func (e *engine) piperRuntimeReady() bool {
 	exe, _ := findWorkerPiperExecutable(e.cfg.PiperRuntimeDir)
 	return exe != ""
+}
+
+func (e *engine) piperOpenJTalkDir() string {
+	return filepath.Join(e.cfg.VoiceDir, "openjtalk", workerOpenJTalkDirName)
+}
+
+func (e *engine) piperOpenJTalkReady() bool {
+	dir := e.piperOpenJTalkDir()
+	st, err := os.Stat(dir)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext == ".dic" || ext == ".bin" {
+			return true
+		}
+	}
+	return false
 }
 
 func findWorkerPiperExecutable(runtimeDir string) (string, error) {
@@ -57,7 +85,6 @@ func defaultPiperCompatDir() string {
 	if err != nil {
 		return ""
 	}
-	// qnap-voice-worker is installed at <QPKG_DIR>/bin/qnap-voice-worker.
 	return filepath.Join(filepath.Dir(filepath.Dir(exe)), "piper-compat")
 }
 
@@ -89,6 +116,9 @@ func (e *engine) piperCompatReady() bool {
 func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 	if !e.piperModelReady() {
 		return ttsResult{}, fmt.Errorf("Piper Plus Tsukuyomi model is not installed under %s", e.cfg.PiperModelDir)
+	}
+	if !e.piperOpenJTalkReady() {
+		return ttsResult{}, fmt.Errorf("Piper Plus OpenJTalk dictionary is not ready under %s", e.piperOpenJTalkDir())
 	}
 	exe, err := findWorkerPiperExecutable(e.cfg.PiperRuntimeDir)
 	if err != nil || exe == "" {
@@ -147,9 +177,6 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 
 	var cmd *exec.Cmd
 	if useCompat {
-		// The QTS base system on TS-253Be ships a much older glibc/libstdc++ than
-		// the official Piper Plus v1.13.0 Linux binary requires. Execute Piper
-		// through an isolated loader bundled in the QPKG instead of changing QTS.
 		launchArgs := []string{"--library-path", compatLib + ":" + runtimeLib, exe}
 		launchArgs = append(launchArgs, args...)
 		cmd = exec.Command(loader, launchArgs...)
@@ -158,14 +185,13 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 	}
 	cmd.Dir = runtimeRoot
 
-	// Keep any first-run OpenJTalk dictionary download persistent and writable
-	// under the voice data directory. The manager/worker runs as the QTS service
-	// user, so this avoids normal-SSH-user permission issues.
 	piperData := filepath.Join(e.cfg.VoiceDir, "piper-data")
 	_ = os.MkdirAll(piperData, 0755)
 	env := append(os.Environ(),
 		"XDG_DATA_HOME="+piperData,
-		"PIPER_PLUS_AUTO_DOWNLOAD_DICT=1",
+		"OPENJTALK_DICTIONARY_PATH="+e.piperOpenJTalkDir(),
+		"PIPER_OFFLINE_MODE=1",
+		"PIPER_AUTO_DOWNLOAD_DICT=0",
 	)
 	if !useCompat {
 		ld := runtimeLib
@@ -194,6 +220,10 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 	wav, err := os.ReadFile(tmpName)
 	if err != nil {
 		return ttsResult{}, fmt.Errorf("read Piper output: %w", err)
+	}
+	if len(wav) <= 44 {
+		msg := strings.TrimSpace(string(output))
+		return ttsResult{}, fmt.Errorf("Piper Plus produced an empty WAV (%d bytes): %s", len(wav), msg)
 	}
 	audio, err := decodeWAV(wav)
 	if err != nil {

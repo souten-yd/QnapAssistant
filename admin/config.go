@@ -68,7 +68,7 @@ func defaults(c config) config {
 		"THINKING_MODE": "off", "IDLE_TIMEOUT_SECONDS": "300", "EXTRA_ARGS": "",
 		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
 		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
-		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "8", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
+		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "4", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
 	}
 	for k, v := range defs {
 		if _, ok := c[k]; !ok {

@@ -31,6 +31,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/status", m.handleStatus)
+	mux.HandleFunc("/api/bootstrap", m.handleBootstrapStatus)
 	mux.HandleFunc("/api/config", m.handleConfig)
 	mux.HandleFunc("/api/thinking", m.handleThinking)
 	mux.HandleFunc("/api/logs", m.handleLogs)
@@ -46,9 +47,9 @@ func main() {
 	mux.HandleFunc("/api/voice/restart", m.handleVoiceAction)
 	mux.HandleFunc("/api/voice/models/download", m.handleVoiceModelDownload)
 	mux.HandleFunc("/api/voice/piper/download", m.handlePiperDownload)
-	mux.HandleFunc("/v1/audio/transcriptions", m.handleVoiceProxy("/asr"))
-	mux.HandleFunc("/v1/audio/speech", m.handleVoiceProxy("/tts"))
-	mux.HandleFunc("/v1/voice/chat", m.handleVoiceChat)
+	mux.HandleFunc("/v1/audio/transcriptions", m.withVoiceProvision(m.handleVoiceProxy("/asr")))
+	mux.HandleFunc("/v1/audio/speech", m.withVoiceProvision(m.handleVoiceProxy("/tts")))
+	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChat))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
@@ -64,6 +65,9 @@ func main() {
 			stop()
 		}
 	}()
+	// Provision all default assets in the background. The API remains available
+	// during setup, and voice requests also wait/retry through withVoiceProvision.
+	go m.autoProvision()
 	<-ctx.Done()
 	log.Printf("shutting down; unloading voice worker and LLM")
 	_ = m.stopVoiceWorker()
