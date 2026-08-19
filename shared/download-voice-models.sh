@@ -10,7 +10,12 @@ TTS_NAME="sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
 ASR_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$ASR_NAME.tar.bz2"
 TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$TTS_NAME.tar.bz2"
 
-mkdir -p "$VOICE_DIR" "$TMP"
+if ! mkdir -p "$VOICE_DIR" "$TMP" 2>/dev/null; then
+  echo "Voice model directory is not writable by this shell user: $VOICE_DIR" >&2
+  echo "Recommended: POST http://127.0.0.1:11435/api/voice/models/download" >&2
+  echo "The management service runs with QTS service permissions and downloads/extracts models without shell write access." >&2
+  exit 1
+fi
 
 fetch() {
   url="$1"
@@ -40,7 +45,8 @@ extract_model() {
   mkdir -p "$work"
   fetch "$url" "$archive"
   if ! tar -xjf "$archive" -C "$work"; then
-    echo "QTS tar/bzip2 support is required to extract $archive" >&2
+    echo "QTS tar/bzip2 support is required for direct shell extraction." >&2
+    echo "Recommended instead: POST http://127.0.0.1:11435/api/voice/models/download" >&2
     exit 1
   fi
   src="$work/$name"
