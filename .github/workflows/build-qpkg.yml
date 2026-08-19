@@ -2,10 +2,14 @@ name: Build QNAP QPKG
 
 on:
   push:
-    branches: [main, "agent/**"]
+    branches: [main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: qpkg-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
