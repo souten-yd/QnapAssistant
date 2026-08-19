@@ -131,6 +131,23 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Publish explicit main release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^QPKG_VER="\([^"]*\)"/\1/p' qpkg.cfg)
+          test -n "$version"
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.qpkg dist/*.sha256 --clobber
+          else
+            gh release create "$tag" dist/*.qpkg dist/*.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "QnapAssistant $tag" \
+              --generate-notes
+          fi
+
       - name: Publish tagged release assets
         if: startsWith(github.ref, 'refs/tags/v')
         env:
