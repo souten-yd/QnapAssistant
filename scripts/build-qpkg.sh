@@ -3,11 +3,11 @@ set -euo pipefail
 
 QDK_COMMIT="${QDK_COMMIT:-78c77b898fecba8f860b630177248b5fa3f5baaf}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QDK="$ROOT/.build/QDK"
+QDK="$ROOT/.qdk/QDK"
 DIST="$ROOT/dist"
 
 rm -rf "$QDK" "$DIST" "$ROOT/build"
-mkdir -p "$ROOT/.build" "$DIST"
+mkdir -p "$ROOT/.qdk" "$DIST"
 git clone --filter=blob:none https://github.com/qnap-dev/QDK.git "$QDK"
 git -C "$QDK" checkout --detach "$QDK_COMMIT"
 
