@@ -1,0 +1,77 @@
+name: Build QNAP QPKG
+
+on:
+  push:
+    branches: [main, "agent/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_CPP_COMMIT: 6d05498314db1b57f81c271080018aa2d0b89be9
+  QDK_COMMIT: 78c77b898fecba8f860b630177248b5fa3f5baaf
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install QPKG build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git fakeroot rsync bsdextrautils xz-utils openssl file ca-certificates
+
+      - name: Validate package sources
+        run: ./scripts/validate.sh
+
+      - name: Build static llama.cpp binaries for TS-253Be
+        run: |
+          docker run --rm \
+            -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" \
+            -v "$PWD:/work" -w /work alpine:3.22 \
+            sh -lc 'apk add --no-cache bash build-base cmake ninja git linux-headers file && ./scripts/build-llama.sh'
+
+      - name: Inspect binary compatibility
+        run: |
+          file x86_64/bin/llama-server x86_64/bin/llama-bench
+          readelf -h x86_64/bin/llama-server
+          if ldd x86_64/bin/llama-server 2>&1 | grep -vqE 'not a dynamic executable|statically linked'; then
+            echo "llama-server is unexpectedly dynamically linked" >&2
+            ldd x86_64/bin/llama-server || true
+            exit 1
+          fi
+          if objdump -d x86_64/bin/llama-server | grep -E '\b(ymm[0-9]+|zmm[0-9]+)\b' -m 1; then
+            echo "Unexpected AVX/AVX-512 vector register detected" >&2
+            exit 1
+          fi
+
+      - name: Build QPKG
+        run: ./scripts/build-qpkg.sh
+
+      - name: Upload QPKG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QnapAssistant-x86_64
+          path: |
+            dist/*.qpkg
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish tagged release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/*.qpkg dist/*.sha256 --clobber

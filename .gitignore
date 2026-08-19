@@ -1,0 +1,7 @@
+.build/
+build/
+dist/
+x86_64/bin/llama-server
+*.qpkg
+*.part
+.DS_Store
