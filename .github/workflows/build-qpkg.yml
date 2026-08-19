@@ -27,7 +27,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git fakeroot rsync bsdextrautils xz-utils openssl file ca-certificates
+            build-essential git fakeroot rsync bsdextrautils pv xz-utils \
+            openssl curl file ca-certificates
 
       - name: Validate package sources
         run: ./scripts/validate.sh
