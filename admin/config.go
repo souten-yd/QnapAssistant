@@ -33,7 +33,7 @@ func loadConfig(path string) (config, error) {
 }
 
 func saveConfig(path string, c config) error {
-	order := []string{"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES", "ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS"}
+	order := []string{"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES", "ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS"}
 	var b strings.Builder
 	b.WriteString("# QnapAssistant persistent configuration\n")
 	for _, k := range order {
@@ -61,7 +61,7 @@ func defaults(c config) config {
 		"MODEL_SHA256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
 		"MIN_MODEL_BYTES": "100000000", "ADMIN_PORT": "11435", "BACKEND_PORT": "11436",
 		"THREADS": "4", "THREADS_BATCH": "4", "CONTEXT": "4096", "BATCH": "256", "UBATCH": "128", "PARALLEL": "1",
-		"IDLE_TIMEOUT_SECONDS": "300", "EXTRA_ARGS": "",
+		"THINKING_MODE": "off", "IDLE_TIMEOUT_SECONDS": "300", "EXTRA_ARGS": "",
 	}
 	for k, v := range defs {
 		if _, ok := c[k]; !ok {

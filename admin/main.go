@@ -36,6 +36,7 @@ func main() {
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/status", m.handleStatus)
 	mux.HandleFunc("/api/config", m.handleConfig)
+	mux.HandleFunc("/api/thinking", m.handleThinking)
 	mux.HandleFunc("/api/logs", m.handleLogs)
 	mux.HandleFunc("/api/models", m.handleModels)
 	mux.HandleFunc("/api/models/select", m.handleModelSelect)
@@ -43,7 +44,7 @@ func main() {
 	mux.HandleFunc("/api/llm/start", m.handleLLMStart)
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
-	mux.HandleFunc("/v1/", m.handleProxy)
+	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
 	cfg, _ := loadConfig(configPath)
