@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-QDK_COMMIT="${QDK_COMMIT:-78c77b898fecba8f860b630177248b5fa3f5baaf}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BOOTSTRAP_DIR="${1:-$ROOT/.bootstrap}"
 QPKG=$(find "$BOOTSTRAP_DIR" -type f -name '*.qpkg' | head -n 1)
@@ -11,24 +10,27 @@ if [ -z "$QPKG" ]; then
   exit 1
 fi
 
-QDK="$ROOT/.qdk-bootstrap/QDK"
 EXTRACT="$ROOT/.bootstrap-extracted"
-rm -rf "$ROOT/.qdk-bootstrap" "$EXTRACT"
-mkdir -p "$ROOT/.qdk-bootstrap" "$EXTRACT" "$ROOT/x86_64/bin"
+rm -rf "$EXTRACT"
+mkdir -p "$EXTRACT" "$ROOT/x86_64/bin"
 
-git clone --quiet --filter=blob:none https://github.com/qnap-dev/QDK.git "$QDK"
-git -C "$QDK" checkout --quiet --detach "$QDK_COMMIT"
-cat > "$QDK/shared/qdk.conf" <<EOF
-QDK_VERSION=2.5.3
-QDK_PATH="$QDK/shared"
-EOF
-chmod +x "$QDK/shared/bin/qbuild"
+# QDK QPKGs are self-extracting shell archives. Parse the generated header to
+# locate the architecture data archive directly, avoiding a QDK install/build.
+SCRIPT_LEN=$(grep -a -m1 '^script_len=' "$QPKG" | sed 's/^script_len=//')
+CONTROL_PAD=$(grep -a -m1 '^offset=.*\$script_len + ' "$QPKG" | sed -n 's/.*\$script_len + \([0-9][0-9]*\)).*/\1/p')
+DATA_SIZE=$(grep -a -m1 '^offset=.*\$offset + ' "$QPKG" | sed -n 's/.*\$offset + \([0-9][0-9]*\)).*/\1/p')
 
-QDK_PATH="$QDK/shared" "$QDK/shared/bin/qbuild" --extract "$QPKG" "$EXTRACT"
+if ! [[ "$SCRIPT_LEN" =~ ^[0-9]+$ && "$CONTROL_PAD" =~ ^[0-9]+$ && "$DATA_SIZE" =~ ^[0-9]+$ ]]; then
+  echo "Could not parse QPKG payload offsets" >&2
+  exit 1
+fi
+
+DATA_OFFSET=$((SCRIPT_LEN + CONTROL_PAD))
+tail -c +$((DATA_OFFSET + 1)) "$QPKG" | head -c "$DATA_SIZE" > "$EXTRACT/data.tar.xz"
+tar -xJf "$EXTRACT/data.tar.xz" -C "$EXTRACT"
 
 cp "$EXTRACT/bin/llama-server" "$ROOT/x86_64/bin/llama-server"
 cp "$EXTRACT/bin/llama-bench" "$ROOT/x86_64/bin/llama-bench"
 chmod 0755 "$ROOT/x86_64/bin/llama-server" "$ROOT/x86_64/bin/llama-bench"
-
-rm -rf "$ROOT/.qdk-bootstrap" "$EXTRACT"
+rm -rf "$EXTRACT"
 echo "Reused llama binaries from baseline QPKG: $QPKG"
