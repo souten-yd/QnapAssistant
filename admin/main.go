@@ -32,7 +32,7 @@ func main() {
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/status", m.handleStatus)
 	mux.HandleFunc("/api/bootstrap", m.handleBootstrapStatus)
-	mux.HandleFunc("/api/config", m.handleConfig)
+	mux.HandleFunc("/api/config", m.handleConfigV04)
 	mux.HandleFunc("/api/thinking", m.handleThinking)
 	mux.HandleFunc("/api/logs", m.handleLogs)
 	mux.HandleFunc("/api/models", m.handleModels)
@@ -48,8 +48,10 @@ func main() {
 	mux.HandleFunc("/api/voice/models/download", m.handleVoiceModelDownload)
 	mux.HandleFunc("/api/voice/piper/download", m.handlePiperDownload)
 	mux.HandleFunc("/v1/audio/transcriptions", m.withVoiceProvision(m.handleVoiceProxy("/asr")))
-	mux.HandleFunc("/v1/audio/speech", m.withVoiceProvision(m.handleVoiceProxy("/tts")))
-	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChat))
+	mux.HandleFunc("/v1/audio/speech", m.withVoiceProvision(m.handleVoiceSpeech))
+	mux.HandleFunc("/v1/audio/speech/stream", m.withVoiceProvision(m.handleVoiceSpeechStream))
+	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStream))
+	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatAdaptive))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
@@ -66,9 +68,6 @@ func main() {
 		}
 	}()
 
-	// Provision missing assets first. In resident mode, immediately start the
-	// LLM and voice worker afterwards so Qwen, SenseVoice, Supertonic fallback,
-	// and the long-running Piper/Tsukuyomi process are already hot before use.
 	go func() {
 		m.autoProvision()
 		cfg, _ := loadConfig(configPath)
@@ -84,8 +83,6 @@ func main() {
 			log.Printf("resident LLM ready")
 		}
 		if err := m.ensureVoiceReady(warmCtx); err != nil {
-			// startVoiceWorker is not rolled back on a readiness timeout; the worker
-			// continues preloading in the background and becomes hot when complete.
 			log.Printf("resident voice warmup pending/failed: %v", err)
 		} else {
 			log.Printf("resident voice ready")
@@ -104,7 +101,7 @@ func main() {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate, X-Qnap-Voice-Profile")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
