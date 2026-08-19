@@ -16,8 +16,8 @@ grep -q '^QPKG_VER="0.1.3"$' "$ROOT/qpkg.cfg"
 grep -q 'QPKG_SERVICE_PORT="11435"' "$ROOT/qpkg.cfg"
 grep -q 'QPKG_SERVICE_PIDFILE="/share/Public/QnapAssistant/qnapassistant.pid"' "$ROOT/qpkg.cfg"
 grep -q 'find_running_pid' "$ROOT/shared/start-stop.sh"
-if grep -q 'kill -0' "$ROOT/shared/start-stop.sh"; then
-  echo "start-stop.sh must not use kill -0 for cross-user status detection" >&2
+if grep -Eq '^[[:space:]]*kill[[:space:]]+-0([[:space:]]|$)' "$ROOT/shared/start-stop.sh"; then
+  echo "start-stop.sh must not execute kill -0 for cross-user status detection" >&2
   exit 1
 fi
 (cd "$ROOT/admin" && go test ./... && go vet ./...)
