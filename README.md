@@ -1,92 +1,122 @@
 # QnapAssistant
 
-QNAP NAS向けのローカルAIアシスタントQPKGです。`llama.cpp` の `llama-server` をQNAP App Centerから起動し、Qwen3-0.6BをOpenAI互換APIとWeb UIで利用できます。
+QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ターゲットは **QNAP TS-253Be / Intel Celeron J3455 / x86_64** です。
 
-初期ターゲットは **QNAP TS-253Be (Intel Celeron J3455 / x86_64)** です。GitHub ActionsがTS-253Be互換のCPU命令セットで`llama-server`をビルドし、QDKで`.qpkg`を生成します。
+## 特徴
 
-## 主要仕様
-
-- QPKG名: `QnapAssistant`
-- Web UI / API: `http://<NAS-IP>:11435/`
+- QTS App Centerへ手動インストールできる `.qpkg`
 - OpenAI互換API: `http://<NAS-IP>:11435/v1/`
-- デフォルトモデル: `Qwen3-0.6B-Q8_0.gguf`
-- **モデル保存先: `/share/Public/Qwen3-0.6B-Q8_0.gguf`**
-- モデルは初回起動時だけ公式Qwen Hugging Faceからダウンロード
-- QPKG更新・削除時もPublic共有上のモデルは保持
-- デフォルト: 4 threads / ctx 4096 / batch 256 / parallel 1
+- 軽量な管理APIだけを常駐し、**LLMはオンデマンドでロード**
+- APIアクセスが無い状態が既定5分続くと `llama-server` を停止しモデルRAMを解放
+- Web設定UI: `http://<NAS-IP>:11435/`
+- llama.cppログ / 管理サーバーログをWeb/APIから取得
+- threads / context / batch / ubatch / parallel / idle timeout /追加引数を変更可能
+- `/share/Public` にある別の `.gguf` を選択可能
+- URLから追加GGUFを `/share/Public` へダウンロード可能
+- デフォルトモデル: 公式 `Qwen3-0.6B-Q8_0.gguf`
+- Qwen3 Thinkingは既定OFF。UI/APIからOFF / ON / passthroughを切替可能
+- GitHub ActionsでQPKGを自動生成
 
-## QPKGの作り方
+## 保存先
 
-GitHubの **Actions → Build QNAP QPKG → Run workflow** を実行します。成功後、`QnapAssistant-x86_64` artifactから`.qpkg`とSHA-256ファイルを取得できます。
+デフォルトモデル: `/share/Public/Qwen3-0.6B-Q8_0.gguf`
 
-`v*`タグをpushすると同じ成果物がGitHub Releaseにも添付されます。
+設定・PID・ログ:
 
-## QNAPへのインストール
+```text
+/share/Public/QnapAssistant/config.env
+/share/Public/QnapAssistant/qnapassistant.pid
+/share/Public/QnapAssistant/admin.log
+/share/Public/QnapAssistant/llama-server.log
+/share/Public/QnapAssistant/benchmark.txt
+```
 
-1. QTSのApp Centerを開く。
-2. 手動インストールから生成された`.qpkg`を選ぶ。
-3. Qnap Assistantを有効化する。
-4. 初回起動時にQwen3-0.6Bが`/share/Public/Qwen3-0.6B-Q8_0.gguf`へダウンロードされる。
-5. `http://<NAS-IP>:11435/`を開く。
+## オンデマンドロード
 
-初回ダウンロード中はWeb UIがまだ開けません。ログは `/share/Public/QnapAssistant/llama-server.log` に出力されます。
+QNAP起動時に常駐するのは `qnap-assistant` 管理サーバーです。`:11435/v1/*` に要求が来るとlocalhostの `llama-server` を起動し、モデル準備完了後にAPIを転送します。`IDLE_TIMEOUT_SECONDS=300` の既定値では、active requestが無い状態が5分続くとLLMをアンロードします。`0`で自動アンロード無効です。
 
-## 設定
+## Qwen3 Thinking
 
-`/share/Public/QnapAssistant/config.env` を編集できます。変更後はApp CenterからQnap Assistantを再起動してください。
+`THINKING_MODE=off` が既定です。Qwen3の `/v1/chat/completions` に対して、明示的な `/think` / `/no_think` が無い場合だけ `/no_think` を自動付与します。
 
-主な項目:
+- `off`: `/no_think` を自動付与
+- `on`: `/think` を自動付与
+- `passthrough`: クライアント要求を変更しない
+
+非Qwen3モデルにはThinking指示を自動付与しません。
+
+## 管理UI / Debug API
+
+ブラウザ: `http://<NAS-IP>:11435/`
+
+```text
+GET  /health
+GET  /api/status
+GET  /api/config
+PUT  /api/config
+GET  /api/thinking
+PUT  /api/thinking
+GET  /api/logs?target=llama&lines=400
+GET  /api/logs?target=admin&lines=400
+GET  /api/models
+POST /api/models/select
+POST /api/models/download
+POST /api/llm/start
+POST /api/llm/stop
+POST /api/llm/restart
+```
+
+## TS-253Be 実機結果
+
+QNAP TS-253Be / Celeron J3455で確認済みです。
+
+- Qwen3-0.6B Q8_0: 約610 MiB
+- `llama-bench pp128`: 16.41 ± 1.67 tok/s
+- `llama-bench tg64`: 7.75 ± 1.39 tok/s
+- `/no_think` 実チャット: 約8.45 tok/s
+- Thinking OFF自動適用: 実機確認済み
+- 5分アイドル後のLLMアンロード: 実機確認済み
+
+## QTSサービス互換性
+
+QTS/BusyBox環境での実機検証を反映しています。
+
+- `nohup` に依存しない
+- 管理デーモンはSIGHUPを無視
+- PIDファイルが無い/古い場合は `ps` から管理プロセスを再検出
+- `status` の存在確認では `kill -0` を使わないため、通常NASユーザーからadmin所有のQTSサービス状態を確認可能
+- `stop` / `restart` は実際にsignal権限が必要で、権限不足時は明示エラー
+
+## 主な設定
 
 ```sh
 MODEL_PATH=/share/Public/Qwen3-0.6B-Q8_0.gguf
-HOST=0.0.0.0
-PORT=11435
+MODEL_DIR=/share/Public
+ADMIN_PORT=11435
+BACKEND_PORT=11436
 THREADS=4
+THREADS_BATCH=4
 CONTEXT=4096
 BATCH=256
 UBATCH=128
 PARALLEL=1
+THINKING_MODE=off
+IDLE_TIMEOUT_SECONDS=300
+EXTRA_ARGS=
 ```
 
-別のGGUFを使う場合は`MODEL_PATH`と`MODEL_URL`を変更できます。
+## GitHub Actionsのコスト抑制
 
-## TS-253Be向けビルド
+通常CIでは **llama.cppを毎回再ビルドしません**。pinned runtimeをActions cacheから復元し、cache miss時のみ既に成功したbaseline QPKG artifactから再利用します。それも無い場合は高コストな再ビルドを勝手に開始せずfail-fastします。llama.cppを本当に更新するときだけ `workflow_dispatch` の `allow_llama_rebuild=true` を指定します。
 
-J3455互換性を優先し、`GGML_NATIVE=OFF`、SSE4.2有効、AVX/AVX2/FMA/F16C/BMI2無効でビルドします。さらにAlpine/musl環境で静的リンクし、QTS側glibcバージョンへの依存を避けます。GitHub ActionsランナーのCPUに最適化されたバイナリを誤って生成しないためです。
+同じPRの古いrunは `concurrency` とActions APIでキャンセルし、docs/READMEだけの変更ではQPKG CIを起動しません。
 
-llama.cppとQDKはGitコミットSHAで固定し、再現可能なビルドにしています。更新はworkflowとbuild script内のSHAを意図的に変更して行います。
+## QNAPへのインストール
 
-## 動作確認
+1. `Build QNAP QPKG` の成功Artifact `QnapAssistant-x86_64` を開く
+2. `.qpkg` をQTS → App Center → 手動インストール
+3. Qnap Assistantを有効化
+4. `http://<NAS-IP>:11435/`を開く
+5. 初回LLM要求時にQwen3-0.6Bが `/share/Public` へダウンロードされる
 
-NAS上でSSHが利用できる場合:
-
-```sh
-/share/*/.qpkg/QnapAssistant/start-stop.sh status
-curl http://127.0.0.1:11435/health
-curl http://127.0.0.1:11435/v1/models
-```
-
-チャットAPI例:
-
-```sh
-curl http://127.0.0.1:11435/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"こんにちは"}],"max_tokens":128}'
-```
-
-## ディレクトリ
-
-```text
-.github/workflows/build-qpkg.yml  GitHub Actions
-qpkg.cfg                          QPKG metadata
-package_routines                  install-time validation
-shared/                           service/config/model downloader
-x86_64/                           generated llama-server payload
-scripts/build-llama.sh            TS-253Be compatible build
-scripts/build-qpkg.sh             QDK package build
-scripts/validate.sh               static validation
-```
-
-## 注意
-
-初版はx86_64 QNAP専用です。QTS 5.0以降を対象とし、TS-253Beを主対象にしています。既定ポートは11435です。必要なら `/share/Public/QnapAssistant/config.env` の `PORT` を変更できます。
+初回取得後はアイドルアンロードしてもGGUFはディスクに残り、次回はRAMへの再ロードだけです。

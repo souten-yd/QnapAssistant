@@ -1,0 +1,6 @@
+pkg_pre_install(){
+    if [ "$(/bin/uname -m)" != "x86_64" ]; then
+        err_log "Qnap Assistant currently supports x86_64 QNAP NAS only."
+        return 1
+    fi
+}

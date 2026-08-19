@@ -1,0 +1,13 @@
+.build/
+.qdk/
+.qdk-bootstrap/
+.bootstrap/
+.bootstrap-extracted/
+build/
+dist/
+x86_64/bin/llama-server
+x86_64/bin/llama-bench
+x86_64/bin/qnap-assistant
+*.qpkg
+*.part
+.DS_Store
