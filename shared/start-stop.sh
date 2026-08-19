@@ -11,10 +11,13 @@ DEFAULT_CONFIG="$QPKG_DIR/config.env.default"
 LOG_FILE="$DATA_DIR/admin.log"
 SERVER="$QPKG_DIR/bin/qnap-assistant"
 
+# Process existence checks must not use `kill -0`: when a normal NAS user runs
+# `status`, the QTS-managed daemon is owned by admin and signal permission is
+# denied even though the process exists. Match the PID + executable in `ps`
+# instead; only stop/restart actually require signal permission.
 pid_matches_server() {
     CANDIDATE="$1"
     [ -n "$CANDIDATE" ] || return 1
-    kill -0 "$CANDIDATE" 2>/dev/null || return 1
     ps 2>/dev/null | awk -v pid="$CANDIDATE" -v server="$SERVER" '
         $1 == pid && index($0, server) > 0 { found=1 }
         END { exit(found ? 0 : 1) }
@@ -100,14 +103,26 @@ stop_service() {
         return 0
     fi
 
-    kill "$PID" 2>/dev/null || true
+    if ! kill "$PID" 2>/dev/null; then
+        echo "Unable to stop $QPKG_NAME PID $PID: insufficient permission. Use QTS App Center or an admin shell." >&2
+        return 1
+    fi
+
     COUNT=0
     while pid_matches_server "$PID" && [ "$COUNT" -lt 20 ]; do
         sleep 1
         COUNT=$((COUNT + 1))
     done
     if pid_matches_server "$PID"; then
-        kill -9 "$PID" 2>/dev/null || true
+        if ! kill -9 "$PID" 2>/dev/null; then
+            echo "Unable to force-stop $QPKG_NAME PID $PID." >&2
+            return 1
+        fi
+        sleep 1
+    fi
+    if pid_matches_server "$PID"; then
+        echo "$QPKG_NAME PID $PID is still running." >&2
+        return 1
     fi
     rm -f "$PID_FILE" 2>/dev/null || true
     echo "$QPKG_NAME stopped."
@@ -116,7 +131,7 @@ stop_service() {
 case "${1:-}" in
     start) start_service ;;
     stop) stop_service ;;
-    restart) stop_service; start_service ;;
+    restart) stop_service && start_service ;;
     status)
         if is_running; then
             echo "$QPKG_NAME manager is running (PID $PID)."
