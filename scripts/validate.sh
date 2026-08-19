@@ -15,10 +15,11 @@ grep -q '^IDLE_TIMEOUT_SECONDS=300$' "$ROOT/shared/config.env.default"
 grep -q '^VOICE_PORT=11437$' "$ROOT/shared/config.env.default"
 grep -q '^ASR_LANGUAGE=ja$' "$ROOT/shared/config.env.default"
 grep -q '^TTS_LANGUAGE=ja$' "$ROOT/shared/config.env.default"
-grep -q '^QPKG_VER="0.2.0"$' "$ROOT/qpkg.cfg"
+grep -q '^QPKG_VER="0.2.1"$' "$ROOT/qpkg.cfg"
 grep -q 'QPKG_SERVICE_PORT="11435"' "$ROOT/qpkg.cfg"
 grep -q 'QPKG_SERVICE_PIDFILE="/share/Public/QnapAssistant/qnapassistant.pid"' "$ROOT/qpkg.cfg"
 grep -q 'find_running_pid' "$ROOT/shared/start-stop.sh"
+grep -q '/api/voice/models/download' "$ROOT/admin/main.go"
 if grep -Eq '^[[:space:]]*kill[[:space:]]+-0([[:space:]]|$)' "$ROOT/shared/start-stop.sh"; then
   echo "start-stop.sh must not execute kill -0 for cross-user status detection" >&2
   exit 1
