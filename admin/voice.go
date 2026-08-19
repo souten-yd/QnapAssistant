@@ -67,7 +67,7 @@ func (m *manager) startVoiceWorker() error {
 		"TTS_LANGUAGE="+get(cfg, "TTS_LANGUAGE", "ja"),
 		"ASR_THREADS="+get(cfg, "ASR_THREADS", "4"),
 		"TTS_THREADS="+get(cfg, "TTS_THREADS", "2"),
-		"TTS_STEPS="+get(cfg, "TTS_STEPS", "8"),
+		"TTS_STEPS="+get(cfg, "TTS_STEPS", "4"),
 		"TTS_SPEED="+get(cfg, "TTS_SPEED", "1.0"),
 		"TTS_SID="+get(cfg, "TTS_SID", "0"),
 	)
@@ -241,6 +241,28 @@ type voiceChatResponse struct {
 	Timings    map[string]any `json:"timings"`
 }
 
+func voiceReplyMaxTokens(cfg config) int {
+	n := intVal(cfg, "VOICE_REPLY_MAX_TOKENS", 48)
+	if n < 8 {
+		return 8
+	}
+	if n > 96 {
+		return 96
+	}
+	return n
+}
+
+func voiceReplyTemperature(cfg config) float64 {
+	t := floatVal(cfg, "VOICE_REPLY_TEMPERATURE", 0.2)
+	if t < 0 {
+		return 0
+	}
+	if t > 2 {
+		return 2
+	}
+	return t
+}
+
 func (m *manager) handleVoiceChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -289,18 +311,27 @@ func (m *manager) handleVoiceChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	prompt := strings.TrimSpace(asr.Text)
+	messages := []map[string]string{
+		{"role": "system", "content": get(cfg, "VOICE_SYSTEM_PROMPT", "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。")},
+		{"role": "user", "content": strings.TrimSpace(asr.Text)},
+	}
+	llmPayload := map[string]any{
+		"model":       filepath.Base(cfg["MODEL_PATH"]),
+		"messages":    messages,
+		"max_tokens":  voiceReplyMaxTokens(cfg),
+		"temperature": voiceReplyTemperature(cfg),
+	}
 	if strings.Contains(strings.ToLower(filepath.Base(cfg["MODEL_PATH"])), "qwen3") {
 		if mode, ok := normalizeThinkingMode(cfg["THINKING_MODE"]); ok {
-			if mode == "off" {
-				prompt += " /no_think"
-			} else if mode == "on" {
-				prompt += " /think"
+			switch mode {
+			case "off":
+				llmPayload["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+				llmPayload["reasoning_effort"] = "none"
+			case "on":
+				llmPayload["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
 			}
 		}
 	}
-	maxTokens := intVal(cfg, "VOICE_MAX_TOKENS", 128)
-	llmPayload := map[string]any{"model": filepath.Base(cfg["MODEL_PATH"]), "messages": []map[string]string{{"role": "user", "content": prompt}}, "max_tokens": maxTokens}
 	lb, _ := json.Marshal(llmPayload)
 	lr, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, "http://127.0.0.1:"+cfg["BACKEND_PORT"]+"/v1/chat/completions", bytes.NewReader(lb))
 	lr.Header.Set("Content-Type", "application/json")
@@ -317,10 +348,23 @@ func (m *manager) handleVoiceChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var decoded struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			CompletionTokens int `json:"completion_tokens"`
+			PromptTokens     int `json:"prompt_tokens"`
+		} `json:"usage"`
+		Timings struct {
+			CacheN             int     `json:"cache_n"`
+			PromptN            int     `json:"prompt_n"`
+			PromptMS           float64 `json:"prompt_ms"`
+			PredictedN         int     `json:"predicted_n"`
+			PredictedMS        float64 `json:"predicted_ms"`
+			PredictedPerSecond float64 `json:"predicted_per_second"`
+		} `json:"timings"`
 	}
 	if json.Unmarshal(lbody, &decoded) != nil || len(decoded.Choices) == 0 || strings.TrimSpace(decoded.Choices[0].Message.Content) == "" {
 		http.Error(w, "LLM returned no reply", http.StatusBadGateway)
@@ -330,7 +374,7 @@ func (m *manager) handleVoiceChat(w http.ResponseWriter, r *http.Request) {
 	llmWall := time.Since(llmStart)
 
 	ttsStart := time.Now()
-	ttsPayload, _ := json.Marshal(map[string]any{"text": reply, "lang": get(cfg, "TTS_LANGUAGE", "ja"), "speed": floatVal(cfg, "TTS_SPEED", 1.0), "steps": intVal(cfg, "TTS_STEPS", 8), "sid": intVal(cfg, "TTS_SID", 0)})
+	ttsPayload, _ := json.Marshal(map[string]any{"text": reply, "lang": get(cfg, "TTS_LANGUAGE", "ja"), "speed": floatVal(cfg, "TTS_SPEED", 1.0), "steps": intVal(cfg, "TTS_STEPS", 4), "sid": intVal(cfg, "TTS_SID", 0)})
 	tr, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, voiceBase+"/tts", bytes.NewReader(ttsPayload))
 	tr.Header.Set("Content-Type", "application/json")
 	tresp, err := client.Do(tr)
@@ -349,8 +393,12 @@ func (m *manager) handleVoiceChat(w http.ResponseWriter, r *http.Request) {
 		Transcript: asr.Text, Reply: reply, Audio: base64.StdEncoding.EncodeToString(wav), AudioType: "audio/wav",
 		Timings: map[string]any{
 			"asr_wall_ms": asrWall.Milliseconds(), "asr_engine_ms": asr.ProcessMS, "asr_rtf": asr.RTF,
-			"llm_wall_ms": llmWall.Milliseconds(), "tts_wall_ms": ttsWall.Milliseconds(),
-			"tts_engine_ms": tresp.Header.Get("X-Qnap-Processing-Ms"), "tts_rtf": tresp.Header.Get("X-Qnap-RTF"),
+			"llm_wall_ms": llmWall.Milliseconds(),
+			"llm_cache_n": decoded.Timings.CacheN, "llm_prompt_n": decoded.Timings.PromptN, "llm_prompt_ms": decoded.Timings.PromptMS,
+			"llm_predicted_n": decoded.Timings.PredictedN, "llm_predicted_ms": decoded.Timings.PredictedMS, "llm_tok_s": decoded.Timings.PredictedPerSecond,
+			"llm_prompt_tokens": decoded.Usage.PromptTokens, "llm_completion_tokens": decoded.Usage.CompletionTokens,
+			"llm_finish_reason": decoded.Choices[0].FinishReason,
+			"tts_wall_ms": ttsWall.Milliseconds(), "tts_engine_ms": tresp.Header.Get("X-Qnap-Processing-Ms"), "tts_rtf": tresp.Header.Get("X-Qnap-RTF"),
 		},
 	})
 }

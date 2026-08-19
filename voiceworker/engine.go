@@ -45,7 +45,7 @@ type engine struct {
 	ttsRunMu  sync.Mutex
 	tts       *sherpa.OfflineTts
 
-	piperRunMu   sync.Mutex
+	piperRunMu    sync.Mutex
 	piperResident *piperResident
 }
 
@@ -272,11 +272,9 @@ func (e *engine) preload() error {
 	if err := e.ensureASR(); err != nil {
 		failures = append(failures, "ASR: "+err.Error())
 	}
-	if err := e.ensureSupertonic(); err != nil {
-		failures = append(failures, "Supertonic: "+err.Error())
-	}
-	// A tiny resident Piper request blocks until model load + built-in warmup
-	// have completed, so health only becomes available after the default TTS is hot.
+	// Piper is the measured fast path and remains resident. Supertonic files are
+	// still auto-provisioned, but its ONNX sessions are loaded lazily only if the
+	// fallback is actually needed. This avoids an unused thread pool/RSS cost.
 	if _, err := e.synthesizePiper(ttsOptions{Text: "起動確認", Lang: e.cfg.TTSLanguage, Speed: e.cfg.TTSSpeed}); err != nil {
 		failures = append(failures, "Piper: "+err.Error())
 	}

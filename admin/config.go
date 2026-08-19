@@ -37,6 +37,7 @@ func saveConfig(path string, c config) error {
 		"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES",
 		"ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "KEEP_MODELS_LOADED", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS",
 		"VOICE_PORT", "VOICE_DIR", "ASR_MODEL_DIR", "TTS_MODEL_DIR", "ASR_LANGUAGE", "TTS_LANGUAGE", "ASR_THREADS", "TTS_THREADS", "TTS_STEPS", "TTS_SPEED", "TTS_SID", "VOICE_MAX_TOKENS",
+		"VOICE_REPLY_MAX_TOKENS", "VOICE_REPLY_TEMPERATURE", "VOICE_SYSTEM_PROMPT",
 	}
 	var b strings.Builder
 	b.WriteString("# QnapAssistant persistent configuration\n")
@@ -69,6 +70,8 @@ func defaults(c config) config {
 		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
 		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
 		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "4", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
+		"VOICE_REPLY_MAX_TOKENS": "48", "VOICE_REPLY_TEMPERATURE": "0.2",
+		"VOICE_SYSTEM_PROMPT": "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。挨拶や質問の言い直し、冗長な前置き、重複を避け、すぐ本題に答えてください。",
 	}
 	for k, v := range defs {
 		if _, ok := c[k]; !ok {
