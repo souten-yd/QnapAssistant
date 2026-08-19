@@ -33,7 +33,14 @@ func loadConfig(path string) (config, error) {
 }
 
 func saveConfig(path string, c config) error {
-	order := []string{"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES", "ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS"}
+	order := []string{
+		"MODEL_PATH", "MODEL_DIR", "MODEL_URL", "MODEL_SHA256", "MIN_MODEL_BYTES",
+		"ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "KEEP_MODELS_LOADED", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS",
+		"VOICE_PORT", "VOICE_DIR", "ASR_MODEL_DIR", "TTS_MODEL_DIR", "ASR_LANGUAGE", "TTS_LANGUAGE", "ASR_THREADS", "TTS_THREADS", "TTS_STEPS", "TTS_SPEED", "TTS_SID", "VOICE_MAX_TOKENS",
+		"VOICE_REPLY_MAX_TOKENS", "VOICE_REPLY_TEMPERATURE", "VOICE_SYSTEM_PROMPT", "VOICE_PROFILE_DEFAULT",
+		"VOICE_GENERIC_SAMPLE_RATE", "VOICE_GENERIC_PEAK_TARGET", "VOICE_GENERIC_STRIP_EMOJI", "VOICE_GENERIC_STREAM_FORMAT", "VOICE_GENERIC_CHUNK_MIN_CHARS", "VOICE_GENERIC_CHUNK_MAX_CHARS",
+		"VOICE_M5_SAMPLE_RATE", "VOICE_M5_PEAK_TARGET", "VOICE_M5_STRIP_EMOJI", "VOICE_M5_STREAM_FORMAT", "VOICE_M5_CHUNK_MIN_CHARS", "VOICE_M5_CHUNK_MAX_CHARS",
+	}
 	var b strings.Builder
 	b.WriteString("# QnapAssistant persistent configuration\n")
 	for _, k := range order {
@@ -61,7 +68,15 @@ func defaults(c config) config {
 		"MODEL_SHA256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
 		"MIN_MODEL_BYTES": "100000000", "ADMIN_PORT": "11435", "BACKEND_PORT": "11436",
 		"THREADS": "4", "THREADS_BATCH": "4", "CONTEXT": "4096", "BATCH": "256", "UBATCH": "128", "PARALLEL": "1",
-		"THINKING_MODE": "off", "IDLE_TIMEOUT_SECONDS": "300", "EXTRA_ARGS": "",
+		"THINKING_MODE": "off", "KEEP_MODELS_LOADED": "1", "IDLE_TIMEOUT_SECONDS": "0", "EXTRA_ARGS": "",
+		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
+		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
+		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "4", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
+		"VOICE_REPLY_MAX_TOKENS": "48", "VOICE_REPLY_TEMPERATURE": "0.2",
+		"VOICE_SYSTEM_PROMPT": "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。挨拶や質問の言い直し、冗長な前置き、重複を避け、すぐ本題に答えてください。",
+		"VOICE_PROFILE_DEFAULT": "generic",
+		"VOICE_GENERIC_SAMPLE_RATE": "0", "VOICE_GENERIC_PEAK_TARGET": "0", "VOICE_GENERIC_STRIP_EMOJI": "0", "VOICE_GENERIC_STREAM_FORMAT": "ndjson", "VOICE_GENERIC_CHUNK_MIN_CHARS": "12", "VOICE_GENERIC_CHUNK_MAX_CHARS": "28",
+		"VOICE_M5_SAMPLE_RATE": "16000", "VOICE_M5_PEAK_TARGET": "0.12", "VOICE_M5_STRIP_EMOJI": "1", "VOICE_M5_STREAM_FORMAT": "multipart", "VOICE_M5_CHUNK_MIN_CHARS": "8", "VOICE_M5_CHUNK_MAX_CHARS": "18",
 	}
 	for k, v := range defs {
 		if _, ok := c[k]; !ok {
@@ -77,7 +92,6 @@ func get(c config, k, d string) string {
 	}
 	return d
 }
-
 func intVal(c config, k string, d int) int {
 	n, err := strconv.Atoi(get(c, k, ""))
 	if err != nil {

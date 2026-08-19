@@ -28,11 +28,14 @@ env:
   QDK_COMMIT: 78c77b898fecba8f860b630177248b5fa3f5baaf
   BASELINE_QPKG_RUN: "32223913831"
   RUNTIME_CACHE_VERSION: "ts253be-sse42-static-v1"
+  SHERPA_ONNX_VERSION: "1.13.4"
+  SHERPA_GO_LINUX_COMMIT: "a424c836679c18e71d7afcab293ea5ecf539044f"
+  SHERPA_CACHE_VERSION: "ts253be-static-v1"
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,13 +78,18 @@ jobs:
           docker run --rm -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" -v "$PWD:/work" -w /work alpine:3.22 \
             sh -lc 'apk add --no-cache bash build-base cmake ninja git linux-headers file && ./scripts/build-llama.sh'
 
-      - name: Refuse unexpected expensive rebuild
+      - name: Refuse unexpected expensive llama rebuild
         if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild != true
         run: |
-          echo "Pinned llama runtime cache/baseline unavailable." >&2
-          echo "Failing fast instead of starting an expensive rebuild." >&2
-          echo "Use workflow_dispatch with allow_llama_rebuild=true only when intentionally refreshing the runtime." >&2
+          echo "Pinned llama runtime cache/baseline unavailable; refusing automatic expensive rebuild." >&2
           exit 1
+
+      - name: Restore sherpa static dependencies
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: .voice-deps
+          key: sherpa-${{ env.SHERPA_CACHE_VERSION }}-${{ env.SHERPA_ONNX_VERSION }}-${{ env.SHERPA_GO_LINUX_COMMIT }}
 
       - name: Build lightweight management API
         run: |
@@ -89,17 +97,24 @@ jobs:
           cd admin
           CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o ../x86_64/bin/qnap-assistant .
 
+      - name: Build static ASR/TTS voice worker
+        run: ./scripts/build-voice-worker.sh
+
       - name: Validate sources and runtime compatibility
         run: |
           ./scripts/validate.sh
           strip x86_64/bin/llama-server x86_64/bin/llama-bench || true
-          file x86_64/bin/qnap-assistant x86_64/bin/llama-server x86_64/bin/llama-bench
+          file x86_64/bin/qnap-assistant x86_64/bin/qnap-voice-worker x86_64/bin/llama-server x86_64/bin/llama-bench
           if ldd x86_64/bin/llama-server 2>&1 | grep -vqE 'not a dynamic executable|statically linked'; then
             echo "llama-server is unexpectedly dynamically linked" >&2
             exit 1
           fi
+          if ldd x86_64/bin/qnap-voice-worker 2>&1 | grep -vqE 'not a dynamic executable|statically linked'; then
+            echo "qnap-voice-worker is unexpectedly dynamically linked" >&2
+            exit 1
+          fi
           if objdump -d x86_64/bin/llama-server | grep -E '\b(ymm[0-9]+|zmm[0-9]+)\b' -m 1; then
-            echo "Unexpected AVX/AVX-512 vector register detected" >&2
+            echo "Unexpected AVX/AVX-512 vector register detected in llama-server" >&2
             exit 1
           fi
 

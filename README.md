@@ -17,6 +17,38 @@ QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ター
 - Qwen3 Thinkingは既定OFF。UI/APIからOFF / ON / passthroughを切替可能
 - GitHub ActionsでQPKGを自動生成
 
+## Voice Pipeline（開発中）
+
+M5GOなどのクライアントは録音・簡易VAD/ボタン・音声再生だけを担当し、QNAP側で **ASR → LLM → TTS** を一括処理します。
+
+```text
+M5GO audio
+   ↓
+SenseVoiceSmall INT8 (ASR, ja)
+   ↓
+Qwen3-0.6B (LLM)
+   ↓
+Supertonic 3 INT8 (TTS, ja)
+   ↓
+M5GO speaker
+```
+
+音声モデルはQPKGに同梱せず `/share/Public/QnapAssistant/voice` に保存します。通常NASユーザーからモデル保存先へ直接書き込ませず、QTSの管理サービス経由で取得するのが既定です。
+
+```text
+POST /api/voice/models/download   # 非同期で公式ASR/TTSモデルを取得
+GET  /api/voice/models/download   # 進捗・完了状態
+GET  /api/voice/status
+POST /api/voice/start|stop|restart
+POST /v1/audio/transcriptions
+POST /v1/audio/speech
+POST /v1/voice/chat
+```
+
+`POST /api/voice/models/download` はQTSで `admin` として動く管理サーバーが実行するため、SSHユーザーが `/share/Public/QnapAssistant` に書き込めなくても利用できます。`.tar.bz2` の展開もGo標準ライブラリで処理し、QTS側の `tar -j` / `bzip2` の有無に依存しません。
+
+詳細設計・ベンチ基準は [`docs/VOICE_PIPELINE.md`](docs/VOICE_PIPELINE.md) を参照してください。
+
 ## 保存先
 
 デフォルトモデル: `/share/Public/Qwen3-0.6B-Q8_0.gguf`
@@ -29,6 +61,7 @@ QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ター
 /share/Public/QnapAssistant/admin.log
 /share/Public/QnapAssistant/llama-server.log
 /share/Public/QnapAssistant/benchmark.txt
+/share/Public/QnapAssistant/voice/
 ```
 
 ## オンデマンドロード
@@ -64,6 +97,12 @@ POST /api/models/download
 POST /api/llm/start
 POST /api/llm/stop
 POST /api/llm/restart
+GET  /api/voice/status
+POST /api/voice/start
+POST /api/voice/stop
+POST /api/voice/restart
+GET  /api/voice/models/download
+POST /api/voice/models/download
 ```
 
 ## TS-253Be 実機結果
@@ -76,6 +115,8 @@ QNAP TS-253Be / Celeron J3455で確認済みです。
 - `/no_think` 実チャット: 約8.45 tok/s
 - Thinking OFF自動適用: 実機確認済み
 - 5分アイドル後のLLMアンロード: 実機確認済み
+- voice worker起動: 実機確認済み
+- ASR/TTS速度: 実機評価中
 
 ## QTSサービス互換性
 
@@ -86,6 +127,7 @@ QTS/BusyBox環境での実機検証を反映しています。
 - PIDファイルが無い/古い場合は `ps` から管理プロセスを再検出
 - `status` の存在確認では `kill -0` を使わないため、通常NASユーザーからadmin所有のQTSサービス状態を確認可能
 - `stop` / `restart` は実際にsignal権限が必要で、権限不足時は明示エラー
+- 音声モデル取得は管理APIで実行し、通常ユーザーのファイル書き込み権限を要求しない
 
 ## 主な設定
 
@@ -103,11 +145,21 @@ PARALLEL=1
 THINKING_MODE=off
 IDLE_TIMEOUT_SECONDS=300
 EXTRA_ARGS=
+VOICE_PORT=11437
+VOICE_DIR=/share/Public/QnapAssistant/voice
+ASR_MODEL_DIR=/share/Public/QnapAssistant/voice/sensevoice
+TTS_MODEL_DIR=/share/Public/QnapAssistant/voice/supertonic3
+ASR_LANGUAGE=ja
+TTS_LANGUAGE=ja
+ASR_THREADS=4
+TTS_THREADS=2
+TTS_STEPS=8
+TTS_SPEED=1.0
 ```
 
 ## GitHub Actionsのコスト抑制
 
-通常CIでは **llama.cppを毎回再ビルドしません**。pinned runtimeをActions cacheから復元し、cache miss時のみ既に成功したbaseline QPKG artifactから再利用します。それも無い場合は高コストな再ビルドを勝手に開始せずfail-fastします。llama.cppを本当に更新するときだけ `workflow_dispatch` の `allow_llama_rebuild=true` を指定します。
+通常CIでは **llama.cppを毎回再ビルドしません**。pinned runtimeをActions cacheから復元し、cache miss時のみ既に成功したbaseline QPKG artifactから再利用します。それも無い場合は高コストな再ビルドを勝手に開始せずfail-fastします。sherpa-onnxも公式static-libをキャッシュし、毎回ソースビルドしません。
 
 同じPRの古いrunは `concurrency` とActions APIでキャンセルし、docs/READMEだけの変更ではQPKG CIを起動しません。
 
@@ -118,5 +170,6 @@ EXTRA_ARGS=
 3. Qnap Assistantを有効化
 4. `http://<NAS-IP>:11435/`を開く
 5. 初回LLM要求時にQwen3-0.6Bが `/share/Public` へダウンロードされる
+6. Voice Pipeline利用時は `POST /api/voice/models/download` でASR/TTSモデルを取得する
 
-初回取得後はアイドルアンロードしてもGGUFはディスクに残り、次回はRAMへの再ロードだけです。
+初回取得後はアイドルアンロードしてもGGUF/音声モデルはディスクに残ります。

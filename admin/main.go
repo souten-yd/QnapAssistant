@@ -15,11 +15,7 @@ import (
 const defaultConfigPath = "/share/Public/QnapAssistant/config.env"
 
 func main() {
-	// QNAP services may be launched from an SSH/session-backed shell during
-	// diagnostics. Ignore SIGHUP so closing that shell does not terminate the
-	// management daemon. QTS stop/restart still uses SIGTERM below.
 	signal.Ignore(syscall.SIGHUP)
-
 	qpkgDir := os.Getenv("QPKG_DIR")
 	if qpkgDir == "" {
 		exe, _ := os.Executable()
@@ -35,7 +31,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/status", m.handleStatus)
-	mux.HandleFunc("/api/config", m.handleConfig)
+	mux.HandleFunc("/api/bootstrap", m.handleBootstrapStatus)
+	mux.HandleFunc("/api/config", m.handleConfigV04)
 	mux.HandleFunc("/api/thinking", m.handleThinking)
 	mux.HandleFunc("/api/logs", m.handleLogs)
 	mux.HandleFunc("/api/models", m.handleModels)
@@ -44,6 +41,17 @@ func main() {
 	mux.HandleFunc("/api/llm/start", m.handleLLMStart)
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
+	mux.HandleFunc("/api/voice/status", m.handleVoiceStatus)
+	mux.HandleFunc("/api/voice/start", m.handleVoiceAction)
+	mux.HandleFunc("/api/voice/stop", m.handleVoiceAction)
+	mux.HandleFunc("/api/voice/restart", m.handleVoiceAction)
+	mux.HandleFunc("/api/voice/models/download", m.handleVoiceModelDownload)
+	mux.HandleFunc("/api/voice/piper/download", m.handlePiperDownload)
+	mux.HandleFunc("/v1/audio/transcriptions", m.withVoiceProvision(m.handleVoiceProxy("/asr")))
+	mux.HandleFunc("/v1/audio/speech", m.withVoiceProvision(m.handleVoiceSpeech))
+	mux.HandleFunc("/v1/audio/speech/stream", m.withVoiceProvision(m.handleVoiceSpeechStream))
+	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStream))
+	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatAdaptive))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
@@ -59,8 +67,31 @@ func main() {
 			stop()
 		}
 	}()
+
+	go func() {
+		m.autoProvision()
+		cfg, _ := loadConfig(configPath)
+		cfg = defaults(cfg)
+		if !keepModelsLoaded(cfg) || bootstrapSnapshot().Phase != "ready" {
+			return
+		}
+		warmCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := m.ensureReady(warmCtx); err != nil {
+			log.Printf("resident LLM warmup failed: %v", err)
+		} else {
+			log.Printf("resident LLM ready")
+		}
+		if err := m.ensureVoiceReady(warmCtx); err != nil {
+			log.Printf("resident voice warmup pending/failed: %v", err)
+		} else {
+			log.Printf("resident voice ready")
+		}
+	}()
+
 	<-ctx.Done()
-	log.Printf("shutting down; unloading LLM")
+	log.Printf("shutting down; unloading voice worker and LLM")
+	_ = m.stopVoiceWorker()
 	_ = m.stopBackend()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -70,7 +101,7 @@ func main() {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate, X-Qnap-Voice-Profile")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
