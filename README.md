@@ -14,16 +14,18 @@ QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ター
 - `/share/Public` にある別の `.gguf` を選択可能
 - URLから追加GGUFを `/share/Public` へダウンロード可能
 - デフォルトモデル: 公式 `Qwen3-0.6B-Q8_0.gguf`
+- Qwen3 Thinkingは既定OFF。UI/APIからOFF / ON / passthroughを切替可能
 - GitHub ActionsでQPKGを自動生成
 
 ## 保存先
 
 デフォルトモデル: `/share/Public/Qwen3-0.6B-Q8_0.gguf`
 
-設定・ログ:
+設定・PID・ログ:
 
 ```text
 /share/Public/QnapAssistant/config.env
+/share/Public/QnapAssistant/qnapassistant.pid
 /share/Public/QnapAssistant/admin.log
 /share/Public/QnapAssistant/llama-server.log
 /share/Public/QnapAssistant/benchmark.txt
@@ -32,6 +34,16 @@ QNAP NAS向けの軽量ローカルAIアシスタントQPKGです。初期ター
 ## オンデマンドロード
 
 QNAP起動時に常駐するのは `qnap-assistant` 管理サーバーです。`:11435/v1/*` に要求が来るとlocalhostの `llama-server` を起動し、モデル準備完了後にAPIを転送します。`IDLE_TIMEOUT_SECONDS=300` の既定値では、active requestが無い状態が5分続くとLLMをアンロードします。`0`で自動アンロード無効です。
+
+## Qwen3 Thinking
+
+`THINKING_MODE=off` が既定です。Qwen3の `/v1/chat/completions` に対して、明示的な `/think` / `/no_think` が無い場合だけ `/no_think` を自動付与します。
+
+- `off`: `/no_think` を自動付与
+- `on`: `/think` を自動付与
+- `passthrough`: クライアント要求を変更しない
+
+非Qwen3モデルにはThinking指示を自動付与しません。
 
 ## 管理UI / Debug API
 
@@ -42,6 +54,8 @@ GET  /health
 GET  /api/status
 GET  /api/config
 PUT  /api/config
+GET  /api/thinking
+PUT  /api/thinking
 GET  /api/logs?target=llama&lines=400
 GET  /api/logs?target=admin&lines=400
 GET  /api/models
@@ -52,7 +66,26 @@ POST /api/llm/stop
 POST /api/llm/restart
 ```
 
-`/api/status` ではLLMロード状態、active request数、RAM空き、load average、現在モデルなども確認できます。
+## TS-253Be 実機結果
+
+QNAP TS-253Be / Celeron J3455で確認済みです。
+
+- Qwen3-0.6B Q8_0: 約610 MiB
+- `llama-bench pp128`: 16.41 ± 1.67 tok/s
+- `llama-bench tg64`: 7.75 ± 1.39 tok/s
+- `/no_think` 実チャット: 約8.45 tok/s
+- Thinking OFF自動適用: 実機確認済み
+- 5分アイドル後のLLMアンロード: 実機確認済み
+
+## QTSサービス互換性
+
+QTS/BusyBox環境での実機検証を反映しています。
+
+- `nohup` に依存しない
+- 管理デーモンはSIGHUPを無視
+- PIDファイルが無い/古い場合は `ps` から管理プロセスを再検出
+- `status` の存在確認では `kill -0` を使わないため、通常NASユーザーからadmin所有のQTSサービス状態を確認可能
+- `stop` / `restart` は実際にsignal権限が必要で、権限不足時は明示エラー
 
 ## 主な設定
 
@@ -67,17 +100,16 @@ CONTEXT=4096
 BATCH=256
 UBATCH=128
 PARALLEL=1
+THINKING_MODE=off
 IDLE_TIMEOUT_SECONDS=300
 EXTRA_ARGS=
 ```
-
-設定保存時は現在のLLMをアンロードし、次のAPI要求から新設定でロードします。
 
 ## GitHub Actionsのコスト抑制
 
 通常CIでは **llama.cppを毎回再ビルドしません**。pinned runtimeをActions cacheから復元し、cache miss時のみ既に成功したbaseline QPKG artifactから再利用します。それも無い場合は高コストな再ビルドを勝手に開始せずfail-fastします。llama.cppを本当に更新するときだけ `workflow_dispatch` の `allow_llama_rebuild=true` を指定します。
 
-同じPRの古いrunは `concurrency` とActions APIでキャンセルし、docs/READMEだけの変更ではQPKG CIを起動しません。QPKG圧縮もxzからgzipへ変更してパッケージ生成時間を短縮しています。
+同じPRの古いrunは `concurrency` とActions APIでキャンセルし、docs/READMEだけの変更ではQPKG CIを起動しません。
 
 ## QNAPへのインストール
 
