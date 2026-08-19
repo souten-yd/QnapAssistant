@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -156,12 +157,20 @@ func (m *manager) ensureReady(ctx context.Context) error {
 	}
 }
 
+func keepModelsLoaded(c config) bool {
+	v := strings.ToLower(strings.TrimSpace(get(c, "KEEP_MODELS_LOADED", "1")))
+	return v != "0" && v != "false" && v != "off" && v != "no"
+}
+
 func (m *manager) idleLoop() {
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	for range t.C {
 		cfg, _ := loadConfig(m.configPath)
 		cfg = defaults(cfg)
+		if keepModelsLoaded(cfg) {
+			continue
+		}
 		idle := intVal(cfg, "IDLE_TIMEOUT_SECONDS", 300)
 		if idle <= 0 {
 			continue

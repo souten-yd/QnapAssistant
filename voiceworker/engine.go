@@ -45,7 +45,8 @@ type engine struct {
 	ttsRunMu  sync.Mutex
 	tts       *sherpa.OfflineTts
 
-	piperRunMu sync.Mutex
+	piperRunMu   sync.Mutex
+	piperResident *piperResident
 }
 
 type asrResult struct {
@@ -202,9 +203,8 @@ func (e *engine) synthesize(o ttsOptions) (ttsResult, error) {
 		backend = normalizeTTSBackend(e.cfg.TTSBackend)
 	}
 	if backend == "" {
-		backend = "supertonic"
+		backend = "piper_plus"
 	}
-
 	out, err := e.synthesizeBackend(backend, o)
 	if err == nil || explicit {
 		return out, err
@@ -260,17 +260,36 @@ func (e *engine) synthesizeSupertonic(o ttsOptions) (ttsResult, error) {
 		return ttsResult{}, errors.New("TTS generation failed")
 	}
 	sec := float64(len(audio.Samples)) / float64(audio.SampleRate)
-	out := ttsResult{
-		WAV: encodeWAV(audio.Samples, audio.SampleRate), SampleRate: audio.SampleRate,
-		AudioSec: sec, ProcessMS: elapsed.Milliseconds(), Backend: "supertonic",
-	}
+	out := ttsResult{WAV: encodeWAV(audio.Samples, audio.SampleRate), SampleRate: audio.SampleRate, AudioSec: sec, ProcessMS: elapsed.Milliseconds(), Backend: "supertonic"}
 	if sec > 0 {
 		out.RTF = elapsed.Seconds() / sec
 	}
 	return out, nil
 }
 
+func (e *engine) preload() error {
+	var failures []string
+	if err := e.ensureASR(); err != nil {
+		failures = append(failures, "ASR: "+err.Error())
+	}
+	if err := e.ensureSupertonic(); err != nil {
+		failures = append(failures, "Supertonic: "+err.Error())
+	}
+	// A tiny resident Piper request blocks until model load + built-in warmup
+	// have completed, so health only becomes available after the default TTS is hot.
+	if _, err := e.synthesizePiper(ttsOptions{Text: "起動確認", Lang: e.cfg.TTSLanguage, Speed: e.cfg.TTSSpeed}); err != nil {
+		failures = append(failures, "Piper: "+err.Error())
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
+}
+
 func (e *engine) close() {
+	e.piperRunMu.Lock()
+	e.stopPiperResidentLocked()
+	e.piperRunMu.Unlock()
 	e.asrLoadMu.Lock()
 	if e.asr != nil {
 		sherpa.DeleteOfflineRecognizer(e.asr)

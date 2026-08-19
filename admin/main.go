@@ -65,9 +65,33 @@ func main() {
 			stop()
 		}
 	}()
-	// Provision all default assets in the background. The API remains available
-	// during setup, and voice requests also wait/retry through withVoiceProvision.
-	go m.autoProvision()
+
+	// Provision missing assets first. In resident mode, immediately start the
+	// LLM and voice worker afterwards so Qwen, SenseVoice, Supertonic fallback,
+	// and the long-running Piper/Tsukuyomi process are already hot before use.
+	go func() {
+		m.autoProvision()
+		cfg, _ := loadConfig(configPath)
+		cfg = defaults(cfg)
+		if !keepModelsLoaded(cfg) || bootstrapSnapshot().Phase != "ready" {
+			return
+		}
+		warmCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if err := m.ensureReady(warmCtx); err != nil {
+			log.Printf("resident LLM warmup failed: %v", err)
+		} else {
+			log.Printf("resident LLM ready")
+		}
+		if err := m.ensureVoiceReady(warmCtx); err != nil {
+			// startVoiceWorker is not rolled back on a readiness timeout; the worker
+			// continues preloading in the background and becomes hot when complete.
+			log.Printf("resident voice warmup pending/failed: %v", err)
+		} else {
+			log.Printf("resident voice ready")
+		}
+	}()
+
 	<-ctx.Done()
 	log.Printf("shutting down; unloading voice worker and LLM")
 	_ = m.stopVoiceWorker()

@@ -22,31 +22,42 @@ func main() {
 	e := &engine{cfg: cfg}
 	defer e.close()
 
+	// Resident mode: load ASR, Supertonic fallback and Piper/Tsukuyomi once.
+	// The management service waits for /health, so requests arriving after
+	// startup see hot models rather than paying model-load cost.
+	if err := e.preload(); err != nil {
+		log.Printf("voice preload completed with errors: %v", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "service": "QnapAssistant Voice Worker"})
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		piperResident, piperUptime, piperRequests := e.piperResidentStatus()
 		writeJSON(w, map[string]any{
-			"ok":                       true,
-			"asr_model_ready":          e.asrFilesReady(),
-			"supertonic_model_ready":   e.supertonicFilesReady(),
-			"piper_runtime_ready":      e.piperRuntimeReady(),
-			"piper_model_ready":        e.piperModelReady(),
-			"piper_openjtalk_ready":    e.piperOpenJTalkReady(),
-			"piper_compat_ready":       e.piperCompatReady(),
-			"asr_loaded":               e.asr != nil,
-			"tts_loaded":               e.tts != nil,
-			"asr_threads":              cfg.ASRThreads,
-			"tts_threads":              cfg.TTSThreads,
-			"tts_steps":                cfg.TTSSteps,
-			"tts_backend":              cfg.TTSBackend,
-			"tts_fallback_backend":     cfg.TTSFallbackBackend,
-			"asr_model_dir":            cfg.ASRModelDir,
-			"tts_model_dir":            cfg.TTSModelDir,
-			"piper_runtime_dir":        cfg.PiperRuntimeDir,
-			"piper_model_dir":          cfg.PiperModelDir,
-			"piper_openjtalk_directory": e.piperOpenJTalkDir(),
+			"ok":                         true,
+			"asr_model_ready":            e.asrFilesReady(),
+			"supertonic_model_ready":     e.supertonicFilesReady(),
+			"piper_runtime_ready":        e.piperRuntimeReady(),
+			"piper_model_ready":          e.piperModelReady(),
+			"piper_openjtalk_ready":      e.piperOpenJTalkReady(),
+			"piper_compat_ready":         e.piperCompatReady(),
+			"asr_loaded":                 e.asr != nil,
+			"tts_loaded":                 e.tts != nil,
+			"piper_resident":             piperResident,
+			"piper_uptime_seconds":       piperUptime,
+			"piper_requests":             piperRequests,
+			"asr_threads":                cfg.ASRThreads,
+			"tts_threads":                cfg.TTSThreads,
+			"tts_steps":                  cfg.TTSSteps,
+			"tts_backend":                cfg.TTSBackend,
+			"tts_fallback_backend":       cfg.TTSFallbackBackend,
+			"asr_model_dir":              cfg.ASRModelDir,
+			"tts_model_dir":              cfg.TTSModelDir,
+			"piper_runtime_dir":          cfg.PiperRuntimeDir,
+			"piper_model_dir":            cfg.PiperModelDir,
+			"piper_openjtalk_directory":  e.piperOpenJTalkDir(),
 		})
 	})
 	mux.HandleFunc("/asr", e.handleASR)

@@ -114,6 +114,13 @@ func (e *engine) piperCompatReady() bool {
 }
 
 func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
+	if e.useResidentPiper(o) {
+		return e.synthesizePiperResident(o)
+	}
+	return e.synthesizePiperOneShot(o)
+}
+
+func (e *engine) synthesizePiperOneShot(o ttsOptions) (ttsResult, error) {
 	if !e.piperModelReady() {
 		return ttsResult{}, fmt.Errorf("Piper Plus Tsukuyomi model is not installed under %s", e.cfg.PiperModelDir)
 	}
@@ -170,11 +177,9 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 
 	e.piperRunMu.Lock()
 	defer e.piperRunMu.Unlock()
-
 	runtimeRoot := filepath.Dir(filepath.Dir(exe))
 	runtimeLib := filepath.Join(runtimeRoot, "lib")
 	loader, compatLib, useCompat := piperCompatRuntime()
-
 	var cmd *exec.Cmd
 	if useCompat {
 		launchArgs := []string{"--library-path", compatLib + ":" + runtimeLib, exe}
@@ -184,7 +189,6 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 		cmd = exec.Command(exe, args...)
 	}
 	cmd.Dir = runtimeRoot
-
 	piperData := filepath.Join(e.cfg.VoiceDir, "piper-data")
 	_ = os.MkdirAll(piperData, 0755)
 	env := append(os.Environ(),
@@ -201,7 +205,6 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 		env = append(env, "LD_LIBRARY_PATH="+ld)
 	}
 	cmd.Env = env
-
 	started := time.Now()
 	output, runErr := cmd.CombinedOutput()
 	elapsed := time.Since(started)
@@ -210,30 +213,21 @@ func (e *engine) synthesizePiper(o ttsOptions) (ttsResult, error) {
 		if len(msg) > 2000 {
 			msg = msg[len(msg)-2000:]
 		}
-		mode := "system-loader"
-		if useCompat {
-			mode = "qts-compat-loader"
-		}
-		return ttsResult{}, fmt.Errorf("Piper Plus failed (%s): %w: %s", mode, runErr, msg)
+		return ttsResult{}, fmt.Errorf("Piper Plus one-shot failed: %w: %s", runErr, msg)
 	}
-
 	wav, err := os.ReadFile(tmpName)
 	if err != nil {
 		return ttsResult{}, fmt.Errorf("read Piper output: %w", err)
 	}
 	if len(wav) <= 44 {
-		msg := strings.TrimSpace(string(output))
-		return ttsResult{}, fmt.Errorf("Piper Plus produced an empty WAV (%d bytes): %s", len(wav), msg)
+		return ttsResult{}, fmt.Errorf("Piper Plus produced an empty WAV (%d bytes)", len(wav))
 	}
 	audio, err := decodeWAV(wav)
 	if err != nil {
 		return ttsResult{}, fmt.Errorf("decode Piper output: %w", err)
 	}
 	sec := float64(len(audio.Samples)) / float64(audio.SampleRate)
-	out := ttsResult{
-		WAV: wav, SampleRate: audio.SampleRate, AudioSec: sec,
-		ProcessMS: elapsed.Milliseconds(), Backend: "piper_plus",
-	}
+	out := ttsResult{WAV: wav, SampleRate: audio.SampleRate, AudioSec: sec, ProcessMS: elapsed.Milliseconds(), Backend: "piper_plus-one-shot"}
 	if sec > 0 {
 		out.RTF = elapsed.Seconds() / sec
 	}
