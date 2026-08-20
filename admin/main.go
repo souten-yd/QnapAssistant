@@ -50,8 +50,8 @@ func main() {
 	mux.HandleFunc("/v1/audio/transcriptions", m.withVoiceProvision(m.handleVoiceProxy("/asr")))
 	mux.HandleFunc("/v1/audio/speech", m.withVoiceProvision(m.handleVoiceSpeech))
 	mux.HandleFunc("/v1/audio/speech/stream", m.withVoiceProvision(m.handleVoiceSpeechStream))
-	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStream))
-	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatAdaptive))
+	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStreamContext))
+	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatContextAdaptive))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
 	mux.HandleFunc("/", m.handleUI)
 
@@ -101,7 +101,7 @@ func main() {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate, X-Qnap-Voice-Profile")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate, X-Qnap-Voice-Profile, X-Qnap-Voice-Context")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
