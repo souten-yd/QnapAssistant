@@ -42,6 +42,7 @@ func main() {
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
 	mux.HandleFunc("/api/voice/status", m.handleVoiceStatus)
+	mux.HandleFunc("/api/voice/protocol", m.handleVoiceProtocol)
 	mux.HandleFunc("/api/voice/start", m.handleVoiceAction)
 	mux.HandleFunc("/api/voice/stop", m.handleVoiceAction)
 	mux.HandleFunc("/api/voice/restart", m.handleVoiceAction)
