@@ -27,9 +27,11 @@ type voiceChatMessage struct {
 }
 
 type voiceChatControls struct {
-	System    *string            `json:"system,omitempty"`
-	MaxTokens *int               `json:"max_tokens,omitempty"`
-	History   []voiceChatMessage `json:"history,omitempty"`
+	System       *string            `json:"system,omitempty"`
+	MaxTokens    *int               `json:"max_tokens,omitempty"`
+	History      []voiceChatMessage `json:"history,omitempty"`
+	SessionID    *string            `json:"session_id,omitempty"`
+	ResetSession *bool              `json:"reset_session,omitempty"`
 	// OpenAI-style alias. The server appends the current ASR transcript after
 	// these messages, so callers should not include the current utterance here.
 	Messages []voiceChatMessage `json:"messages,omitempty"`
@@ -65,6 +67,12 @@ func mergeVoiceControls(dst *voiceChatControls, src voiceChatControls) {
 	}
 	if src.Messages != nil {
 		dst.Messages = src.Messages
+	}
+	if src.SessionID != nil {
+		dst.SessionID = src.SessionID
+	}
+	if src.ResetSession != nil {
+		dst.ResetSession = src.ResetSession
 	}
 }
 
@@ -156,6 +164,20 @@ func queryVoiceControls(r *http.Request) (voiceChatControls, error) {
 		}
 		controls.History = history
 	}
+	if values, ok := q["session_id"]; ok {
+		s := ""
+		if len(values) > 0 {
+			s = strings.TrimSpace(values[len(values)-1])
+		}
+		controls.SessionID = &s
+	}
+	if values, ok := q["reset_session"]; ok {
+		v := false
+		if len(values) > 0 {
+			v = voiceBool(values[len(values)-1])
+		}
+		controls.ResetSession = &v
+	}
 	return controls, nil
 }
 
@@ -173,6 +195,17 @@ func normalizeVoiceControls(controls *voiceChatControls) error {
 	}
 	if controls.MaxTokens != nil && (*controls.MaxTokens < 1 || *controls.MaxTokens > voiceMaxReplyTokens) {
 		return fmt.Errorf("max_tokens must be between 1 and %d", voiceMaxReplyTokens)
+	}
+	if controls.SessionID != nil {
+		id := strings.TrimSpace(*controls.SessionID)
+		if id == "" {
+			controls.SessionID = nil
+		} else {
+			if !validVoiceSessionID(id) {
+				return fmt.Errorf("session_id must be 1-%d ASCII letters, digits, '.', '_' or '-'", voiceSessionMaxIDBytes)
+			}
+			controls.SessionID = &id
+		}
 	}
 	if len(controls.History) > voiceMaxHistoryItems {
 		return fmt.Errorf("history supports at most %d messages", voiceMaxHistoryItems)
@@ -308,7 +341,7 @@ func parseVoiceChatInput(r *http.Request) (voiceChatInput, error) {
 }
 
 func voiceLLMMessages(cfg config, transcript string, controls voiceChatControls) []map[string]string {
-	defaultSystem := get(cfg, "VOICE_SYSTEM_PROMPT", "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。")
+	defaultSystem := get(cfg, "VOICE_SYSTEM_PROMPT", "あなたは音声アシスタントです。ユーザーの発話内容を踏まえて自然な日本語で答えてください。入力内容をそのまま繰り返すだけの返答を避け、質問や依頼に直接答えてください。説明が必要な場合は省略せず、内容に応じた必要十分な長さで回答してください。")
 	system := defaultSystem
 	if controls.System != nil {
 		system = *controls.System
@@ -328,5 +361,12 @@ func voiceEffectiveMaxTokens(cfg config, controls voiceChatControls) int {
 	if controls.MaxTokens != nil {
 		return *controls.MaxTokens
 	}
-	return voiceReplyMaxTokens(cfg)
+	n := intVal(cfg, "VOICE_REPLY_MAX_TOKENS", 0)
+	if n < 0 {
+		return 0
+	}
+	if n > voiceMaxReplyTokens {
+		return voiceMaxReplyTokens
+	}
+	return n
 }
