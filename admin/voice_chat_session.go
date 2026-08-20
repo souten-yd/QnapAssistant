@@ -66,7 +66,7 @@ func (m *manager) handleVoiceChatSession(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	llmPayload := voiceLLMPayloadWithControls(cfg, asr.Text, false, controls)
+	llmPayload := voiceLLMPayloadStandard(cfg, asr.Text, false, controls)
 	lb, _ := json.Marshal(llmPayload)
 	lr, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, "http://127.0.0.1:"+cfg["BACKEND_PORT"]+"/v1/chat/completions", bytes.NewReader(lb))
 	lr.Header.Set("Content-Type", "application/json")
@@ -149,7 +149,7 @@ func (m *manager) handleVoiceChatSession(w http.ResponseWriter, r *http.Request)
 		"llm_predicted_n": decoded.Timings.PredictedN, "llm_predicted_ms": decoded.Timings.PredictedMS, "llm_tok_s": decoded.Timings.PredictedPerSecond,
 		"llm_prompt_tokens": decoded.Usage.PromptTokens, "llm_completion_tokens": decoded.Usage.CompletionTokens,
 		"llm_finish_reason": decoded.Choices[0].FinishReason,
-		"llm_max_tokens": voiceEffectiveMaxTokens(cfg, controls), "llm_history_messages": len(controls.History),
+		"llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls), "llm_history_messages": len(controls.History),
 		"tts_wall_ms": ttsWall.Milliseconds(), "tts_engine_ms": tresp.Header.Get("X-Qnap-Processing-Ms"), "tts_rtf": tresp.Header.Get("X-Qnap-RTF"),
 	}
 	addVoiceSessionTimings(timings, sessionAfter)
@@ -207,7 +207,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	defer writer.Close()
 	transcriptTimings := map[string]any{
 		"asr_wall_ms": asrWall.Milliseconds(), "asr_engine_ms": asr.ProcessMS, "asr_rtf": asr.RTF,
-		"ready_ms": time.Since(requestStart).Milliseconds(), "llm_max_tokens": voiceEffectiveMaxTokens(cfg, controls),
+		"ready_ms": time.Since(requestStart).Milliseconds(), "llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls),
 		"llm_history_messages": len(controls.History),
 	}
 	addVoiceSessionTimings(transcriptTimings, sessionBefore)
@@ -219,7 +219,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	llmClient := &http.Client{Timeout: 0}
 	llmStart := time.Now()
-	textChunks, llmResult := streamVoiceLLMWithControls(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
+	textChunks, llmResult := streamVoiceLLMStandard(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
 	firstTextMS := int64(0)
 	firstAudioMS := int64(0)
 	chunkIndex := 0
@@ -270,7 +270,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	doneTimings := map[string]any{
 		"asr_wall_ms": asrWall.Milliseconds(), "llm_wall_ms": llm.WallMS, "llm_first_token_ms": llm.FirstTokenMS,
 		"llm_predicted_n": llm.PredictedN, "llm_predicted_ms": llm.PredictedMS, "llm_tok_s": llm.TokPerSecond,
-		"llm_max_tokens": voiceEffectiveMaxTokens(cfg, controls), "llm_history_messages": len(controls.History),
+		"llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls), "llm_history_messages": len(controls.History),
 		"first_text_chunk_ms": firstTextMS, "first_audio_ready_ms": firstAudioMS, "stream_chunks": chunkIndex,
 		"finish_reason": llm.FinishReason, "total_ms": time.Since(requestStart).Milliseconds(),
 	}
