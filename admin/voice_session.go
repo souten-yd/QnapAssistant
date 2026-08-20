@@ -230,7 +230,7 @@ func mergeVoiceSessionControls(cfg config, s voiceSessionState, controls voiceCh
 	effective.History = history
 
 	if strings.TrimSpace(s.Summary) != "" {
-		base := get(cfg, "VOICE_SYSTEM_PROMPT", "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。")
+		base := get(cfg, "VOICE_SYSTEM_PROMPT", "あなたは音声アシスタントです。ユーザーの発話内容を踏まえて自然な日本語で答えてください。入力内容をそのまま繰り返すだけの返答を避け、質問や依頼に直接答えてください。説明が必要な場合は省略せず、内容に応じた必要十分な長さで回答してください。")
 		if controls.System != nil {
 			base = *controls.System
 		}
@@ -250,8 +250,20 @@ func beginVoiceSession(r *http.Request, cfg config, controls voiceChatControls) 
 	if err != nil {
 		return nil, controls, voiceSessionStats{}, err
 	}
+	// parseVoiceChatInput has already applied transport precedence
+	// (query < header < multipart). Let the normalized control object win so a
+	// multipart context can select/reset a session exactly like the header form.
+	if controls.SessionID != nil {
+		env.SessionID = strings.TrimSpace(*controls.SessionID)
+	}
+	if controls.ResetSession != nil {
+		env.ResetSession = *controls.ResetSession
+	}
 	if env.SessionID == "" {
 		return nil, controls, voiceSessionStats{}, nil
+	}
+	if !validVoiceSessionID(env.SessionID) {
+		return nil, controls, voiceSessionStats{}, fmt.Errorf("session_id must be 1-%d ASCII letters, digits, '.', '_' or '-'", voiceSessionMaxIDBytes)
 	}
 	mu := voiceSessionMutex(env.SessionID)
 	mu.Lock()
