@@ -72,8 +72,11 @@ func defaults(c config) config {
 		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
 		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
 		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "4", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
-		"VOICE_REPLY_MAX_TOKENS": "48", "VOICE_REPLY_TEMPERATURE": "0.2",
-		"VOICE_SYSTEM_PROMPT": "あなたは音声アシスタントです。日本語で簡潔に答えてください。原則1文、必要な場合でも最大2文。挨拶や質問の言い直し、冗長な前置き、重複を避け、すぐ本題に答えてください。",
+		// 0 means omit max_tokens and inherit the OpenAI-compatible backend's
+		// standard completion limit. Set a positive value only when a client or
+		// deployment intentionally wants a hard reply cap.
+		"VOICE_REPLY_MAX_TOKENS": "0", "VOICE_REPLY_TEMPERATURE": "0.2",
+		"VOICE_SYSTEM_PROMPT": "あなたは音声アシスタントです。ユーザーの発話内容を踏まえて自然な日本語で答えてください。入力内容をそのまま繰り返すだけの返答を避け、質問や依頼に直接答えてください。説明が必要な場合は省略せず、内容に応じた必要十分な長さで回答してください。音声で不自然なMarkdown記号や絵文字は避けてください。",
 		"VOICE_PROFILE_DEFAULT": "generic",
 		"VOICE_GENERIC_SAMPLE_RATE": "0", "VOICE_GENERIC_PEAK_TARGET": "0", "VOICE_GENERIC_STRIP_EMOJI": "0", "VOICE_GENERIC_STREAM_FORMAT": "ndjson", "VOICE_GENERIC_CHUNK_MIN_CHARS": "12", "VOICE_GENERIC_CHUNK_MAX_CHARS": "28",
 		"VOICE_M5_SAMPLE_RATE": "16000", "VOICE_M5_PEAK_TARGET": "0.12", "VOICE_M5_STRIP_EMOJI": "1", "VOICE_M5_STREAM_FORMAT": "multipart", "VOICE_M5_CHUNK_MIN_CHARS": "8", "VOICE_M5_CHUNK_MAX_CHARS": "18",
