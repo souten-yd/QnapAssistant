@@ -58,7 +58,7 @@ func main() {
 	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStreamSession))
 	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatSessionAdaptive))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
-	mux.HandleFunc("/", m.handleUI)
+	mux.HandleFunc("/", m.handleSimpleUI)
 
 	cfg, _ := loadConfig(configPath)
 	cfg = defaults(cfg)
