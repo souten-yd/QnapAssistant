@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 )
 
-// applyOpenRouterRequestConfig makes the server-side provider selection the
-// source of truth for generic /v1/chat/completions callers as well as voice.
-// Non-chat OpenAI-compatible endpoints are proxied unchanged.
+// applyOpenRouterRequestConfig makes the server-side provider/model selection
+// the source of truth for generic /v1/chat/completions callers. Optional
+// generation controls remain transparent unless QnapAssistant explicitly
+// configures an override.
 func applyOpenRouterRequestConfig(r *http.Request, cfg config) error {
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" || r.Body == nil {
 		return nil
@@ -26,7 +28,11 @@ func applyOpenRouterRequestConfig(r *http.Request, cfg config) error {
 		r.ContentLength = int64(len(body))
 		return nil
 	}
+	originalReasoningEffort, hadReasoningEffort := payload["reasoning_effort"]
 	applyOpenRouterPayload(cfg, payload)
+	if strings.TrimSpace(cfg["OPENROUTER_REASONING_EFFORT"]) == "" && hadReasoningEffort {
+		payload["reasoning_effort"] = originalReasoningEffort
+	}
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
 		return err
