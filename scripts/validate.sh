@@ -3,7 +3,7 @@ set -euo pipefail
 trap 'rc=$?; echo "validate.sh failed at line ${LINENO}: ${BASH_COMMAND}" >&2; exit $rc' ERR
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for f in "$ROOT/shared/start-stop.sh" "$ROOT/shared/download-model.sh" "$ROOT/shared/download-voice-models.sh" "$ROOT/shared/benchmark.sh" "$ROOT/shared/voice-benchmark.sh"; do
+for f in "$ROOT/shared/start-stop.sh" "$ROOT/shared/download-model.sh" "$ROOT/shared/download-voice-models.sh" "$ROOT/shared/benchmark.sh" "$ROOT/shared/voice-benchmark.sh" "$ROOT/shared/update-self.sh"; do
   sh -n "$f"
 done
 for f in "$ROOT/scripts/build-llama.sh" "$ROOT/scripts/build-voice-worker.sh" "$ROOT/scripts/build-qpkg.sh" "$ROOT/scripts/bootstrap-llama-from-qpkg.sh"; do
@@ -33,6 +33,12 @@ grep -Eq '^QPKG_VER="[0-9]+\.[0-9]+\.[0-9]+"$' "$ROOT/qpkg.cfg"
 grep -q '/api/openrouter/key' "$ROOT/admin/main.go"
 grep -q '/api/openrouter/models' "$ROOT/admin/main.go"
 grep -q '/api/openrouter/test' "$ROOT/admin/main.go"
+grep -q '/api/update/check' "$ROOT/admin/main.go"
+grep -q '/api/update/status' "$ROOT/admin/main.go"
+grep -q '/api/update/apply' "$ROOT/admin/main.go"
+grep -q 'X-Qnap-Update-Confirm' "$ROOT/admin/ui_update.go"
+grep -q 'sha256' "$ROOT/shared/update-self.sh"
+grep -q 'qpkg_cli' "$ROOT/shared/update-self.sh"
 grep -q 'openrouter/free' "$ROOT/admin/llm_provider.go"
 grep -q '0600' "$ROOT/admin/llm_provider.go"
 grep -q 'prepareLLMRequest' "$ROOT/admin/voice_llm_standard.go"
