@@ -153,8 +153,9 @@ func setOpenRouterModelChain(payload map[string]any, models []string) {
 // applyOpenRouterAutoFreeFallback uses OpenRouter's model-level `models` array
 // rather than issuing duplicate application-level HTTP retries. OpenRouter then
 // performs provider failover and cross-model fallback server-side for the same
-// logical request. This is both cheaper and less error-prone than blindly
-// resending the request from QnapAssistant.
+// logical request. Configured manual fallbacks are honored first only when they
+// are currently policy-compatible free models; automatic candidates fill the
+// remaining slots.
 func (m *manager) applyOpenRouterAutoFreeFallback(ctx context.Context, c config, payload map[string]any) {
 	if !openRouterAutoFreeFallbackEnabled(c) {
 		return
@@ -172,6 +173,23 @@ func (m *manager) applyOpenRouterAutoFreeFallback(ctx context.Context, c config,
 	seen := map[string]bool{primary: true}
 	candidates, err := m.fetchOpenRouterFreeFallbackCandidates(ctx, c)
 	if err == nil {
+		byID := make(map[string]openRouterFreeFallbackCandidate, len(candidates))
+		for _, candidate := range candidates {
+			byID[candidate.ID] = candidate
+		}
+		// Preserve explicit user preference without allowing a paid or currently
+		// policy-blocked fallback to sneak into "free fallback" mode.
+		for _, configured := range splitCSV(c["OPENROUTER_FALLBACK_MODELS"]) {
+			if len(chain) >= maxAttempts {
+				break
+			}
+			candidate, ok := byID[configured]
+			if !ok || seen[configured] || !fallbackCandidateSupportsPayload(candidate, payload) {
+				continue
+			}
+			seen[configured] = true
+			chain = append(chain, configured)
+		}
 		for _, candidate := range candidates {
 			if len(chain) >= maxAttempts {
 				break
