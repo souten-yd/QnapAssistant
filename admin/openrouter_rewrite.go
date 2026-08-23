@@ -12,7 +12,7 @@ import (
 // the source of truth for generic /v1/chat/completions callers. Optional
 // generation controls remain transparent unless QnapAssistant explicitly
 // configures an override.
-func applyOpenRouterRequestConfig(r *http.Request, cfg config) error {
+func (m *manager) applyOpenRouterRequestConfig(r *http.Request, cfg config) error {
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" || r.Body == nil {
 		return nil
 	}
@@ -30,6 +30,7 @@ func applyOpenRouterRequestConfig(r *http.Request, cfg config) error {
 	}
 	originalReasoningEffort, hadReasoningEffort := payload["reasoning_effort"]
 	applyOpenRouterPayload(cfg, payload)
+	m.applyOpenRouterAutoFreeFallback(r.Context(), cfg, payload)
 	if strings.TrimSpace(cfg["OPENROUTER_REASONING_EFFORT"]) == "" && hadReasoningEffort {
 		payload["reasoning_effort"] = originalReasoningEffort
 	}
