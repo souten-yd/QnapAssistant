@@ -179,6 +179,7 @@ func openRouterModelChain(c config) []string {
 				duplicate = true
 				break
 			}
+		}
 		if !duplicate {
 			out = append(out, model)
 		}
