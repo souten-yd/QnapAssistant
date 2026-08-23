@@ -13,5 +13,6 @@ func (m *manager) handleUpdateUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html := injectUpdateUI(renderedIndexHTML())
 	html = injectOpenRouterBillingUI(html)
+	html = injectOpenRouterFallbackUI(html)
 	_, _ = io.WriteString(w, html)
 }
