@@ -58,7 +58,10 @@ func voiceLLMPayloadStandard(cfg config, transcript string, stream bool, control
 	return payload
 }
 
-func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
+// streamVoiceLLMStandardRaw performs exactly one upstream stream request. The
+// OpenRouter voice retry wrapper calls this with cross-model fallback disabled
+// so each attempt can be attributed to one model.
+func (m *manager) streamVoiceLLMStandardRaw(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
 	chunks := make(chan string, 8)
 	result := make(chan voiceLLMContextStreamResult, 1)
 	go func() {
