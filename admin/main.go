@@ -38,6 +38,9 @@ func main() {
 	mux.HandleFunc("/api/models", m.handleModels)
 	mux.HandleFunc("/api/models/select", m.handleModelSelect)
 	mux.HandleFunc("/api/models/download", m.handleModelDownload)
+	mux.HandleFunc("/api/openrouter/key", m.handleOpenRouterKey)
+	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModels)
+	mux.HandleFunc("/api/openrouter/test", m.handleOpenRouterTest)
 	mux.HandleFunc("/api/llm/start", m.handleLLMStart)
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
@@ -57,6 +60,7 @@ func main() {
 	mux.HandleFunc("/", m.handleUI)
 
 	cfg, _ := loadConfig(configPath)
+	cfg = defaults(cfg)
 	addr := ":" + get(cfg, "ADMIN_PORT", "11435")
 	log.Printf("QnapAssistant management API listening on %s", addr)
 	srv := &http.Server{Addr: addr, Handler: cors(mux), ReadHeaderTimeout: 10 * time.Second}
@@ -73,25 +77,34 @@ func main() {
 		m.autoProvision()
 		cfg, _ := loadConfig(configPath)
 		cfg = defaults(cfg)
-		if !keepModelsLoaded(cfg) || bootstrapSnapshot().Phase != "ready" {
+		if bootstrapSnapshot().Phase != "ready" {
 			return
 		}
 		warmCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		if err := m.ensureReady(warmCtx); err != nil {
-			log.Printf("resident LLM warmup failed: %v", err)
-		} else {
-			log.Printf("resident LLM ready")
+
+		// Remote OpenRouter has no local LLM weights to warm. Local llama.cpp is
+		// warmed only when its independent auto-unload switch is disabled.
+		if normalizedLLMProvider(cfg) == "local" && !llmAutoUnload(cfg) {
+			if err := m.ensureReady(warmCtx); err != nil {
+				log.Printf("resident local LLM warmup failed: %v", err)
+			} else {
+				log.Printf("resident local LLM ready")
+			}
 		}
-		if err := m.ensureVoiceReady(warmCtx); err != nil {
-			log.Printf("resident voice warmup pending/failed: %v", err)
-		} else {
-			log.Printf("resident voice ready")
+		// The voice worker itself is cheap. Start it at boot only when ASR or TTS
+		// should be resident; its preload() honors each switch independently.
+		if !boolConfig(cfg, "ASR_AUTO_UNLOAD", false) || !boolConfig(cfg, "TTS_AUTO_UNLOAD", false) {
+			if err := m.ensureVoiceReady(warmCtx); err != nil {
+				log.Printf("resident voice warmup pending/failed: %v", err)
+			} else {
+				log.Printf("configured resident voice models ready")
+			}
 		}
 	}()
 
 	<-ctx.Done()
-	log.Printf("shutting down; unloading voice worker and LLM")
+	log.Printf("shutting down; unloading voice worker and local LLM")
 	_ = m.stopVoiceWorker()
 	_ = m.stopBackend()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -103,7 +116,7 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sample-Rate, X-Qnap-Voice-Profile, X-Qnap-Voice-Context")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
