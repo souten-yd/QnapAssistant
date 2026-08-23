@@ -119,7 +119,9 @@ func TestVoiceStreamDoesNotRetryAfterTextWasEmitted(t *testing.T) {
 		case "/api/v1/chat/completions":
 			requests++
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n\n")
+			// A hard sentence boundary forces takeVoiceChunk to emit this text before
+			// the following SSE error, so model switching would visibly splice answers.
+			_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"A。\"}}]}\n\n")
 			_, _ = io.WriteString(w, "data: {\"error\":{\"code\":429,\"message\":\"temporarily rate-limited upstream\"}}\n\n")
 		case "/api/v1/models/user":
 			_, _ = io.WriteString(w, `{"data":[{"id":"test/other:free","architecture":{"output_modalities":["text"]},"pricing":{"prompt":"0","completion":"0"}}]}`)
@@ -152,7 +154,7 @@ func TestVoiceStreamDoesNotRetryAfterTextWasEmitted(t *testing.T) {
 	if res.Err == nil || !strings.Contains(res.Err.Error(), "HTTP 429") {
 		t.Fatalf("expected terminal 429 after partial output, got %v", res.Err)
 	}
-	if requests != 1 || strings.Join(got, "") != "A" {
+	if requests != 1 || strings.Join(got, "") != "A。" {
 		t.Fatalf("must not switch model after output: requests=%d chunks=%#v", requests, got)
 	}
 }
