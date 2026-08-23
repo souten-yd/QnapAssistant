@@ -58,7 +58,10 @@ func voiceLLMPayloadStandard(cfg config, transcript string, stream bool, control
 	return payload
 }
 
-func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
+// streamVoiceLLMStandardRaw performs exactly one upstream stream request. The
+// OpenRouter voice retry wrapper calls this with cross-model fallback disabled
+// so each attempt can be attributed to one model.
+func (m *manager) streamVoiceLLMStandardRaw(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
 	chunks := make(chan string, 8)
 	result := make(chan voiceLLMContextStreamResult, 1)
 	go func() {
@@ -103,6 +106,10 @@ func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Clien
 			var packet struct {
 				Model    string `json:"model"`
 				Provider string `json:"provider"`
+				Error    *struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
 				Choices []struct {
 					Delta struct {
 						Content string `json:"content"`
@@ -117,6 +124,14 @@ func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Clien
 			}
 			if err := json.Unmarshal([]byte(data), &packet); err != nil {
 				continue
+			}
+			if packet.Error != nil {
+				code := packet.Error.Code
+				if code == 0 {
+					code = http.StatusBadGateway
+				}
+				res.Err = fmt.Errorf("LLM stream request failed: HTTP %d: %s", code, strings.TrimSpace(packet.Error.Message))
+				return
 			}
 			if packet.Timings.PredictedN > 0 {
 				res.PredictedN = packet.Timings.PredictedN
