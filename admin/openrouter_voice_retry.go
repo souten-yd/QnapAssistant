@@ -75,20 +75,17 @@ func cloneOpenRouterVoiceConfig(c config) config {
 	return out
 }
 
-// streamVoiceLLMStandardWithHealthRetry adds application-level retry only for
-// /v1/voice/chat/stream. Generic OpenRouter requests continue using the existing
-// server-side `models` fallback chain. Each voice retry sends exactly one model
-// so QnapAssistant can attribute success/failure and enforce its blacklist.
-//
-// A retry is only allowed before any text chunk is emitted. Switching models
-// after speech has started would splice two answers together.
-func (m *manager) streamVoiceLLMStandardWithHealthRetry(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
+// streamVoiceLLMStandard is the session stream entry point used by
+// /v1/voice/chat/stream. Generic OpenRouter requests keep the existing
+// server-side `models` fallback chain, while this path uses explicit retries so
+// each attempted model can be measured and blacklisted independently.
+func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
 	chunks := make(chan string, 8)
 	result := make(chan voiceLLMContextStreamResult, 1)
 	go func() {
 		defer close(chunks)
 		if normalizedLLMProvider(cfg) != "openrouter" || !openRouterAutoFreeFallbackEnabled(cfg) {
-			innerChunks, innerResult := m.streamVoiceLLMStandard(ctx, client, cfg, profile, transcript, controls, llmStart)
+			innerChunks, innerResult := m.streamVoiceLLMStandardRaw(ctx, client, cfg, profile, transcript, controls, llmStart)
 			for text := range innerChunks {
 				select {
 				case chunks <- text:
@@ -163,7 +160,7 @@ func (m *manager) streamVoiceLLMStandardWithHealthRetry(ctx context.Context, cli
 			// attempt. Provider failover within the same model remains unchanged.
 			attemptCfg["OPENROUTER_AUTO_FREE_FALLBACK"] = "0"
 
-			innerChunks, innerResult := m.streamVoiceLLMStandard(ctx, client, attemptCfg, profile, transcript, controls, llmStart)
+			innerChunks, innerResult := m.streamVoiceLLMStandardRaw(ctx, client, attemptCfg, profile, transcript, controls, llmStart)
 			emitted := false
 			for text := range innerChunks {
 				emitted = true
