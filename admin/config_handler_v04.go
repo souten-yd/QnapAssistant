@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ func configKeyAllowedV04(k string) bool {
 		"OPENROUTER_PROVIDER_SORT": true, "OPENROUTER_ALLOW_FALLBACKS": true, "OPENROUTER_REQUIRE_PARAMETERS": true, "OPENROUTER_DATA_COLLECTION": true, "OPENROUTER_ZDR": true,
 		"OPENROUTER_PROVIDER_ONLY": true, "OPENROUTER_PROVIDER_IGNORE": true, "OPENROUTER_MAX_PRICE_PROMPT": true, "OPENROUTER_MAX_PRICE_COMPLETION": true,
 		"OPENROUTER_HTTP_REFERER": true, "OPENROUTER_X_TITLE": true,
+		"OPENROUTER_VOICE_AUTO_FALLBACK": true, "OPENROUTER_VOICE_FALLBACK_MAX_ATTEMPTS": true,
 		"ASR_MODEL_DIR": true, "TTS_MODEL_DIR": true, "ASR_LANGUAGE": true, "TTS_LANGUAGE": true, "ASR_THREADS": true, "TTS_THREADS": true, "TTS_STEPS": true, "TTS_SPEED": true, "TTS_SID": true,
 		"ASR_AUTO_UNLOAD": true, "ASR_IDLE_TIMEOUT_SECONDS": true, "TTS_AUTO_UNLOAD": true, "TTS_IDLE_TIMEOUT_SECONDS": true,
 		"VOICE_REPLY_MAX_TOKENS": true, "VOICE_REPLY_TEMPERATURE": true, "VOICE_SYSTEM_PROMPT": true,
@@ -56,6 +58,19 @@ func validateProviderConfig(c config) string {
 	}
 	if v := strings.TrimSpace(c["OPENROUTER_DATA_COLLECTION"]); v != "" && v != "allow" && v != "deny" {
 		return "OPENROUTER_DATA_COLLECTION must be blank, allow, or deny"
+	}
+	if v := strings.TrimSpace(c["OPENROUTER_VOICE_AUTO_FALLBACK"]); v != "" {
+		switch strings.ToLower(v) {
+		case "0", "1", "true", "false", "on", "off", "yes", "no":
+		default:
+			return "OPENROUTER_VOICE_AUTO_FALLBACK must be 0/1 or true/false"
+		}
+	}
+	if v := strings.TrimSpace(c["OPENROUTER_VOICE_FALLBACK_MAX_ATTEMPTS"]); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 5 {
+			return "OPENROUTER_VOICE_FALLBACK_MAX_ATTEMPTS must be 1..5"
+		}
 	}
 	return ""
 }
