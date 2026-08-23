@@ -105,40 +105,48 @@ func (m *manager) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) 
 	supertonic := voiceModelFilesReady(cfg["TTS_MODEL_DIR"], ttsVoiceRequired)
 	piperModel := piperModelReady(cfg)
 	openjtalk := openJTalkDictionaryReady(piperOpenJTalkDir(cfg))
+	provider := normalizedLLMProvider(cfg)
+	key, _ := m.readOpenRouterKey()
+	llmAssetReady := qwen
+	if provider == "openrouter" {
+		// OpenRouter has no local LLM asset. API-key readiness is reported
+		// separately because it is configuration, not a downloadable model.
+		llmAssetReady = true
+	}
+	voiceReady := asr && supertonic && exe != "" && piperModel && openjtalk
 	writeJSON(w, map[string]any{
-		"bootstrap":             bootstrapSnapshot(),
-		"qwen_ready":            qwen,
-		"asr_ready":             asr,
-		"supertonic_ready":      supertonic,
-		"piper_runtime_ready":   exe != "",
-		"piper_model_ready":     piperModel,
-		"piper_openjtalk_ready": openjtalk,
-		"all_ready":             qwen && asr && supertonic && exe != "" && piperModel && openjtalk,
-		"tts_default":           "piper_plus",
+		"bootstrap":                  bootstrapSnapshot(),
+		"llm_provider":               provider,
+		"llm_asset_ready":            llmAssetReady,
+		"openrouter_key_configured":  key != "",
+		"qwen_ready":                 qwen,
+		"qwen_required":              provider == "local",
+		"asr_ready":                  asr,
+		"supertonic_ready":           supertonic,
+		"piper_runtime_ready":        exe != "",
+		"piper_model_ready":          piperModel,
+		"piper_openjtalk_ready":      openjtalk,
+		"all_ready":                  llmAssetReady && voiceReady,
+		"tts_default":                "piper_plus",
 	})
 }
 
 func (m *manager) autoProvision() {
-	setBootstrap(true, "starting", "")
-	var failures []string
-	setBootstrap(true, "qwen", "")
-	if err := m.ensureDefaultLLMModel(); err != nil {
-		log.Printf("automatic Qwen provisioning failed: %v", err)
-		failures = append(failures, "qwen: "+err.Error())
-	}
+	// Voice assets are common to both local and OpenRouter LLM modes. The local
+	// GGUF is no longer an unconditional boot dependency: ensureReady/startBackend
+	// downloads it on first local use (or startup warmup when local residency is
+	// enabled). This prevents OpenRouter-only installations from paying a 610 MB
+	// local-model download before they can use the remote provider.
+	setBootstrap(true, "voice", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	setBootstrap(true, "voice", "")
 	if err := m.ensureVoiceAssets(ctx); err != nil {
 		log.Printf("automatic voice provisioning failed: %v", err)
-		failures = append(failures, "voice: "+err.Error())
-	}
-	if len(failures) > 0 {
-		setBootstrap(false, "error", strings.Join(failures, "; "))
+		setBootstrap(false, "error", "voice: "+err.Error())
 		return
 	}
 	setBootstrap(false, "ready", "")
-	log.Printf("automatic asset provisioning complete")
+	log.Printf("automatic common asset provisioning complete")
 }
 
 func (m *manager) ensureDefaultLLMModel() error {
