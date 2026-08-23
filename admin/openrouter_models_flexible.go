@@ -19,6 +19,9 @@ type openRouterCatalogModel struct {
 	ContextLength       int             `json:"context_length"`
 	Pricing             json.RawMessage `json:"pricing"`
 	SupportedParameters []string        `json:"supported_parameters"`
+	Architecture        struct {
+		OutputModalities []string `json:"output_modalities"`
+	} `json:"architecture"`
 }
 
 type openRouterModelSummaryFlexible struct {
@@ -37,10 +40,6 @@ type openRouterModelSummaryFlexible struct {
 	CooldownUntil       string              `json:"cooldown_until,omitempty"`
 }
 
-// scalarOpenRouterPricing keeps scalar pricing values while tolerating future
-// structured values. OpenRouter pricing values are usually strings, but parsing
-// numbers too makes the catalog resilient to harmless schema representation
-// changes.
 func scalarOpenRouterPricing(raw map[string]json.RawMessage) map[string]string {
 	out := map[string]string{}
 	for key, value := range raw {
@@ -57,10 +56,6 @@ func scalarOpenRouterPricing(raw map[string]json.RawMessage) map[string]string {
 	return out
 }
 
-// parseOpenRouterPricing accepts both documented pricing forms:
-//   {"prompt":"...","completion":"..."}
-// and tiered pricing:
-//   [{...base...},{...long-context...,"min_context":200000}]
 func parseOpenRouterPricing(raw json.RawMessage) (map[string]string, []map[string]string, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -139,6 +134,19 @@ func openRouterCatalogItemFree(item openRouterCatalogModel) bool {
 	return strings.Contains(item.ID, ":free") || pricingIsFree(pricing, tiers)
 }
 
+func openRouterCatalogItemText(item openRouterCatalogModel) bool {
+	if len(item.Architecture.OutputModalities) == 0 {
+		// Backward compatibility with older/mock responses that omitted architecture.
+		return true
+	}
+	for _, modality := range item.Architecture.OutputModalities {
+		if strings.EqualFold(modality, "text") {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *manager) fetchOpenRouterCatalog(ctx context.Context, c config, path string) ([]openRouterCatalogModel, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterBaseURL(c)+path, nil)
 	if err != nil {
@@ -176,7 +184,7 @@ func (m *manager) fetchOpenRouterUserCatalog(ctx context.Context, c config) ([]o
 	if key == "" {
 		return nil, fmt.Errorf("OpenRouter API key is not configured")
 	}
-	return m.fetchOpenRouterCatalog(ctx, c, "/models/user?output_modalities=text")
+	return m.fetchOpenRouterCatalog(ctx, c, "/models/user")
 }
 
 func (m *manager) fetchOpenRouterUserModelIDs(ctx context.Context, c config) (map[string]bool, error) {
@@ -186,7 +194,9 @@ func (m *manager) fetchOpenRouterUserModelIDs(ctx context.Context, c config) (ma
 	}
 	ids := make(map[string]bool, len(models))
 	for _, model := range models {
-		ids[model.ID] = true
+		if openRouterCatalogItemText(model) {
+			ids[model.ID] = true
+		}
 	}
 	return ids, nil
 }
@@ -198,7 +208,7 @@ func (m *manager) fetchOpenRouterUserFreeModelIDs(ctx context.Context, c config)
 	}
 	out := make([]string, 0, len(models))
 	for _, model := range models {
-		if openRouterCatalogItemFree(model) {
+		if openRouterCatalogItemText(model) && openRouterCatalogItemFree(model) {
 			out = append(out, model.ID)
 		}
 	}
@@ -224,7 +234,9 @@ func (m *manager) handleOpenRouterModelsFlexible(w http.ResponseWriter, r *http.
 		if userCatalog, userErr := m.fetchOpenRouterUserCatalog(r.Context(), c); userErr == nil {
 			policyKnown = true
 			for _, item := range userCatalog {
-				policyAllowed[item.ID] = true
+				if openRouterCatalogItemText(item) {
+					policyAllowed[item.ID] = true
+				}
 			}
 		}
 	}
