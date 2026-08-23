@@ -40,7 +40,7 @@ func main() {
 	mux.HandleFunc("/api/models/download", m.handleModelDownload)
 	mux.HandleFunc("/api/openrouter/key", m.handleOpenRouterKey)
 	mux.HandleFunc("/api/openrouter/check", m.handleOpenRouterCheck)
-	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModels)
+	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModelsFlexible)
 	mux.HandleFunc("/api/openrouter/test", m.handleOpenRouterTest)
 	mux.HandleFunc("/api/update/check", m.handleUpdateCheck)
 	mux.HandleFunc("/api/update/status", m.handleUpdateStatus)
