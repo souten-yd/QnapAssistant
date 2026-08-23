@@ -226,7 +226,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	llmClient := &http.Client{Timeout: 0}
 	llmStart := time.Now()
-	textChunks, llmResult := m.streamVoiceLLMStandard(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
+	textChunks, llmResult := m.streamVoiceLLMStandardWithFallback(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
 	firstTextMS := int64(0)
 	firstAudioMS := int64(0)
 	chunkIndex := 0
