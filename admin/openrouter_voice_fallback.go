@@ -178,9 +178,12 @@ func classifyOpenRouterRetryError(err error) openRouterRetryClass {
 	}
 	class.Status = http.StatusNotFound
 	class.Retry = true
+	// Permanent exclusion requires an explicit policy signal. A generic
+	// "no endpoints available" 404 may simply be temporary provider/model
+	// availability and must not poison the persistent blacklist.
 	policyWords := []string{
 		"guardrail", "data policy", "privacy", "policy restriction", "policy restrictions",
-		"no endpoints available matching", "zero data retention", "zdr",
+		"zero data retention", "zdr",
 	}
 	for _, word := range policyWords {
 		if strings.Contains(s, word) {
