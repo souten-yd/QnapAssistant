@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,10 +14,8 @@ import (
 
 // voiceConfiguredMaxTokens returns false when the request and persistent
 // configuration both leave the reply limit unspecified. In that case the
-// `max_tokens` key is omitted entirely and llama.cpp/OpenAI-compatible backend
-// semantics decide how long the completion may be. This deliberately keeps
-// reply length separate from M5 audio chunking: a long completion can still be
-// emitted as many 8-18 character TTS chunks.
+// `max_tokens` key is omitted entirely and the selected OpenAI-compatible
+// backend decides how long the completion may be.
 func voiceConfiguredMaxTokens(cfg config, controls voiceChatControls) (int, bool) {
 	if controls.MaxTokens != nil {
 		return *controls.MaxTokens, true
@@ -43,6 +40,10 @@ func voiceLLMPayloadStandard(cfg config, transcript string, stream bool, control
 	if n, ok := voiceConfiguredMaxTokens(cfg, controls); ok {
 		payload["max_tokens"] = n
 	}
+	if normalizedLLMProvider(cfg) == "openrouter" {
+		applyOpenRouterPayload(cfg, payload)
+		return payload
+	}
 	if strings.Contains(strings.ToLower(filepath.Base(cfg["MODEL_PATH"])), "qwen3") {
 		if mode, ok := normalizeThinkingMode(cfg["THINKING_MODE"]); ok {
 			switch mode {
@@ -57,22 +58,22 @@ func voiceLLMPayloadStandard(cfg config, transcript string, stream bool, control
 	return payload
 }
 
-func streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
+func (m *manager) streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
 	chunks := make(chan string, 8)
 	result := make(chan voiceLLMContextStreamResult, 1)
 	go func() {
 		defer close(chunks)
 		res := voiceLLMContextStreamResult{}
 		defer func() { result <- res }()
+		release := m.beginLLMUse()
+		defer release()
 
 		payload := voiceLLMPayloadStandard(cfg, transcript, true, controls)
-		body, _ := json.Marshal(payload)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+cfg["BACKEND_PORT"]+"/v1/chat/completions", bytes.NewReader(body))
+		req, err := m.prepareLLMRequest(ctx, cfg, payload)
 		if err != nil {
 			res.Err = err
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
 			res.Err = fmt.Errorf("LLM stream request failed: %w", err)
@@ -100,6 +101,8 @@ func streamVoiceLLMStandard(ctx context.Context, client *http.Client, cfg config
 				break
 			}
 			var packet struct {
+				Model    string `json:"model"`
+				Provider string `json:"provider"`
 				Choices []struct {
 					Delta struct {
 						Content string `json:"content"`

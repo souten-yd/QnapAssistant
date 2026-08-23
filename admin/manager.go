@@ -41,6 +41,13 @@ func (m *manager) backendRunningLocked() bool { return m.cmd != nil && m.cmd.Pro
 func (m *manager) startBackend() error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
+
+	cfg, _ := loadConfig(m.configPath)
+	cfg = defaults(cfg)
+	if normalizedLLMProvider(cfg) != "local" {
+		return nil
+	}
+
 	m.mu.Lock()
 	if m.backendRunningLocked() {
 		m.mu.Unlock()
@@ -48,8 +55,6 @@ func (m *manager) startBackend() error {
 	}
 	m.mu.Unlock()
 
-	cfg, _ := loadConfig(m.configPath)
-	cfg = defaults(cfg)
 	model := cfg["MODEL_PATH"]
 	if st, err := os.Stat(model); err != nil || st.Size() < int64(intVal(cfg, "MIN_MODEL_BYTES", 1)) {
 		dl := filepath.Join(m.qpkgDir, "download-model.sh")
@@ -123,13 +128,16 @@ func (m *manager) stopBackend() error {
 }
 
 func (m *manager) ensureReady(ctx context.Context) error {
+	cfg, _ := loadConfig(m.configPath)
+	cfg = defaults(cfg)
+	if normalizedLLMProvider(cfg) == "openrouter" {
+		return m.openRouterReady()
+	}
 	if err := m.startBackend(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	cfg, _ := loadConfig(m.configPath)
-	cfg = defaults(cfg)
 	healthURL := "http://127.0.0.1:" + cfg["BACKEND_PORT"] + "/health"
 	client := &http.Client{Timeout: 2 * time.Second}
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -157,6 +165,24 @@ func (m *manager) ensureReady(ctx context.Context) error {
 	}
 }
 
+// beginLLMUse protects a local llama.cpp instance from being auto-unloaded in
+// the middle of a voice request. It is harmless for OpenRouter and also gives
+// status consumers a consistent active request count.
+func (m *manager) beginLLMUse() func() {
+	m.mu.Lock()
+	m.activeRequests++
+	m.lastUsed = time.Now()
+	m.mu.Unlock()
+	return func() {
+		m.mu.Lock()
+		if m.activeRequests > 0 {
+			m.activeRequests--
+		}
+		m.lastUsed = time.Now()
+		m.mu.Unlock()
+	}
+}
+
 func keepModelsLoaded(c config) bool {
 	v := strings.ToLower(strings.TrimSpace(get(c, "KEEP_MODELS_LOADED", "1")))
 	return v != "0" && v != "false" && v != "off" && v != "no"
@@ -168,10 +194,10 @@ func (m *manager) idleLoop() {
 	for range t.C {
 		cfg, _ := loadConfig(m.configPath)
 		cfg = defaults(cfg)
-		if keepModelsLoaded(cfg) {
+		if normalizedLLMProvider(cfg) != "local" || !llmAutoUnload(cfg) {
 			continue
 		}
-		idle := intVal(cfg, "IDLE_TIMEOUT_SECONDS", 300)
+		idle := llmIdleTimeout(cfg)
 		if idle <= 0 {
 			continue
 		}
@@ -179,7 +205,7 @@ func (m *manager) idleLoop() {
 		should := m.backendRunningLocked() && m.activeRequests == 0 && time.Since(m.lastUsed) > time.Duration(idle)*time.Second
 		m.mu.Unlock()
 		if should {
-			log.Printf("idle timeout reached; unloading LLM")
+			log.Printf("LLM idle timeout reached; unloading local model")
 			_ = m.stopBackend()
 		}
 	}

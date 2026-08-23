@@ -16,21 +16,6 @@ type voiceClientProfile struct {
 	ChunkMaxChars int
 }
 
-func boolConfig(c config, key string, d bool) bool {
-	v := strings.ToLower(strings.TrimSpace(get(c, key, "")))
-	if v == "" {
-		return d
-	}
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return d
-	}
-}
-
 func normalizedVoiceProfileName(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "m5", "m5go", "m5-go", "m5stack", "m5-stack":
