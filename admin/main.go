@@ -42,6 +42,7 @@ func main() {
 	mux.HandleFunc("/api/openrouter/check", m.handleOpenRouterCheck)
 	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModelsPolicyAware)
 	mux.HandleFunc("/api/openrouter/test", m.handleOpenRouterTest)
+	mux.HandleFunc("/api/openrouter/voice-health", m.handleOpenRouterVoiceHealth)
 	mux.HandleFunc("/api/update/check", m.handleUpdateCheck)
 	mux.HandleFunc("/api/update/status", m.handleUpdateStatus)
 	mux.HandleFunc("/api/update/apply", m.handleUpdateApply)
