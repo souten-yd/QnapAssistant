@@ -42,6 +42,7 @@ func main() {
 	mux.HandleFunc("/api/openrouter/check", m.handleOpenRouterCheck)
 	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModelsFlexible)
 	mux.HandleFunc("/api/openrouter/test", m.handleOpenRouterTest)
+	mux.HandleFunc("/api/openrouter/fallback", m.handleOpenRouterFallback)
 	mux.HandleFunc("/api/update/check", m.handleUpdateCheck)
 	mux.HandleFunc("/api/update/status", m.handleUpdateStatus)
 	mux.HandleFunc("/api/update/apply", m.handleUpdateApply)
@@ -86,9 +87,6 @@ func main() {
 		}
 		warmCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-
-		// Remote OpenRouter has no local LLM weights to warm. Local llama.cpp is
-		// warmed only when its independent auto-unload switch is disabled.
 		if normalizedLLMProvider(cfg) == "local" && !llmAutoUnload(cfg) {
 			if err := m.ensureReady(warmCtx); err != nil {
 				log.Printf("resident local LLM warmup failed: %v", err)
@@ -96,8 +94,6 @@ func main() {
 				log.Printf("resident local LLM ready")
 			}
 		}
-		// The voice worker itself is cheap. Start it at boot only when ASR or TTS
-		// should be resident; its preload() honors each switch independently.
 		if !boolConfig(cfg, "ASR_AUTO_UNLOAD", false) || !boolConfig(cfg, "TTS_AUTO_UNLOAD", false) {
 			if err := m.ensureVoiceReady(warmCtx); err != nil {
 				log.Printf("resident voice warmup pending/failed: %v", err)
