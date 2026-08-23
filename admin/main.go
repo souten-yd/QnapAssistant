@@ -42,6 +42,9 @@ func main() {
 	mux.HandleFunc("/api/openrouter/check", m.handleOpenRouterCheck)
 	mux.HandleFunc("/api/openrouter/models", m.handleOpenRouterModels)
 	mux.HandleFunc("/api/openrouter/test", m.handleOpenRouterTest)
+	mux.HandleFunc("/api/update/check", m.handleUpdateCheck)
+	mux.HandleFunc("/api/update/status", m.handleUpdateStatus)
+	mux.HandleFunc("/api/update/apply", m.handleUpdateApply)
 	mux.HandleFunc("/api/llm/start", m.handleLLMStart)
 	mux.HandleFunc("/api/llm/stop", m.handleLLMStop)
 	mux.HandleFunc("/api/llm/restart", m.handleLLMRestart)
@@ -58,7 +61,7 @@ func main() {
 	mux.HandleFunc("/v1/voice/chat/stream", m.withVoiceProvision(m.handleVoiceChatStreamSession))
 	mux.HandleFunc("/v1/voice/chat", m.withVoiceProvision(m.handleVoiceChatSessionAdaptive))
 	mux.HandleFunc("/v1/", m.handleProxyWithThinking)
-	mux.HandleFunc("/", m.handleSimpleUI)
+	mux.HandleFunc("/", m.handleUpdateUI)
 
 	cfg, _ := loadConfig(configPath)
 	cfg = defaults(cfg)
