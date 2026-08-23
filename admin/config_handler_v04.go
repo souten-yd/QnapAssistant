@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -13,7 +14,7 @@ func configKeyAllowedV04(k string) bool {
 		"MODEL_PATH": true, "MODEL_DIR": true, "MODEL_URL": true, "MODEL_SHA256": true, "MIN_MODEL_BYTES": true,
 		"ADMIN_PORT": true, "BACKEND_PORT": true, "THREADS": true, "THREADS_BATCH": true, "CONTEXT": true, "BATCH": true, "UBATCH": true, "PARALLEL": true,
 		"IDLE_TIMEOUT_SECONDS": true, "EXTRA_ARGS": true,
-		"OPENROUTER_BASE_URL": true, "OPENROUTER_MODEL": true, "OPENROUTER_FALLBACK_MODELS": true, "OPENROUTER_PRESET": true,
+		"OPENROUTER_BASE_URL": true, "OPENROUTER_MODEL": true, "OPENROUTER_FALLBACK_MODELS": true, "OPENROUTER_AUTO_FREE_FALLBACK": true, "OPENROUTER_AUTO_FREE_FALLBACK_ATTEMPTS": true, "OPENROUTER_PRESET": true,
 		"OPENROUTER_TEMPERATURE": true, "OPENROUTER_TOP_P": true, "OPENROUTER_REASONING_EFFORT": true,
 		"OPENROUTER_PROVIDER_SORT": true, "OPENROUTER_ALLOW_FALLBACKS": true, "OPENROUTER_REQUIRE_PARAMETERS": true, "OPENROUTER_DATA_COLLECTION": true, "OPENROUTER_ZDR": true,
 		"OPENROUTER_PROVIDER_ONLY": true, "OPENROUTER_PROVIDER_IGNORE": true, "OPENROUTER_MAX_PRICE_PROMPT": true, "OPENROUTER_MAX_PRICE_COMPLETION": true,
@@ -47,6 +48,15 @@ func voiceRuntimeKeyV05(k string) bool {
 	}
 }
 
+func validBoolSetting(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "1", "true", "false", "on", "off", "yes", "no":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateProviderConfig(c config) string {
 	if p := strings.ToLower(strings.TrimSpace(c["LLM_PROVIDER"])); p != "local" && p != "openrouter" {
 		return "LLM_PROVIDER must be local or openrouter"
@@ -56,6 +66,13 @@ func validateProviderConfig(c config) string {
 	}
 	if v := strings.TrimSpace(c["OPENROUTER_DATA_COLLECTION"]); v != "" && v != "allow" && v != "deny" {
 		return "OPENROUTER_DATA_COLLECTION must be blank, allow, or deny"
+	}
+	if !validBoolSetting(c["OPENROUTER_AUTO_FREE_FALLBACK"]) {
+		return "OPENROUTER_AUTO_FREE_FALLBACK must be a boolean value"
+	}
+	attempts, err := strconv.Atoi(strings.TrimSpace(c["OPENROUTER_AUTO_FREE_FALLBACK_ATTEMPTS"]))
+	if err != nil || attempts < 1 || attempts > openRouterAutoFallbackMaxAttempts {
+		return "OPENROUTER_AUTO_FREE_FALLBACK_ATTEMPTS must be between 1 and 5"
 	}
 	return ""
 }
