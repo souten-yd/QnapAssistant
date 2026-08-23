@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'rc=$?; echo "validate.sh failed at line ${LINENO}: ${BASH_COMMAND}" >&2; exit $rc' ERR
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for f in "$ROOT/shared/start-stop.sh" "$ROOT/shared/download-model.sh" "$ROOT/shared/download-voice-models.sh" "$ROOT/shared/benchmark.sh" "$ROOT/shared/voice-benchmark.sh"; do
