@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -130,7 +131,7 @@ func TestAutomaticFreeFallbackUsesOnlyUserPolicyCatalogAndPrefersManualFree(t *t
 	cfg = defaults(cfg)
 	payload := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hello"}}}
 	applyOpenRouterPayload(cfg, payload)
-	m.applyOpenRouterAutoFreeFallback(t.Context(), cfg, payload)
+	m.applyOpenRouterAutoFreeFallback(context.Background(), cfg, payload)
 
 	models, ok := payload["models"].([]string)
 	if !ok {
