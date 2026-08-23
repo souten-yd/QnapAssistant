@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,16 +13,27 @@ import (
 )
 
 type openRouterCatalogModel struct {
-	ID                  string                     `json:"id"`
-	Name                string                     `json:"name"`
-	ContextLength       int                        `json:"context_length"`
-	Pricing             map[string]json.RawMessage `json:"pricing"`
-	SupportedParameters []string                   `json:"supported_parameters"`
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	ContextLength       int             `json:"context_length"`
+	Pricing             json.RawMessage `json:"pricing"`
+	SupportedParameters []string        `json:"supported_parameters"`
 }
 
-// scalarOpenRouterPricing keeps only scalar pricing values that the existing UI
-// can display. OpenRouter may add structured pricing entries (arrays/objects)
-// for modalities or tools; those must not make the whole model catalog fail.
+type openRouterModelSummaryFlexible struct {
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	ContextLength       int                 `json:"context_length,omitempty"`
+	Pricing             map[string]string   `json:"pricing,omitempty"`
+	PricingTiers        []map[string]string `json:"pricing_tiers,omitempty"`
+	SupportedParameters []string            `json:"supported_parameters,omitempty"`
+	Free                bool                `json:"free"`
+}
+
+// scalarOpenRouterPricing keeps scalar pricing values while tolerating future
+// structured values. OpenRouter pricing values are usually strings, but parsing
+// numbers too makes the catalog resilient to harmless schema representation
+// changes.
 func scalarOpenRouterPricing(raw map[string]json.RawMessage) map[string]string {
 	out := map[string]string{}
 	for key, value := range raw {
@@ -30,21 +42,84 @@ func scalarOpenRouterPricing(raw map[string]json.RawMessage) map[string]string {
 			out[key] = s
 			continue
 		}
-		var n json.Number
-		if err := json.Unmarshal(value, &n); err == nil && n.String() != "" {
-			out[key] = n.String()
+		var n float64
+		if err := json.Unmarshal(value, &n); err == nil {
+			out[key] = strconv.FormatFloat(n, 'g', -1, 64)
 		}
 	}
 	return out
 }
 
-func scalarPriceZero(pricing map[string]string, key string) bool {
-	v := strings.TrimSpace(pricing[key])
-	if v == "" {
-		return false
+// parseOpenRouterPricing accepts both documented pricing forms:
+//   {"prompt":"...","completion":"..."}
+// and tiered pricing:
+//   [{...base...},{...long-context...,"min_context":200000}]
+// The first tier is returned as Pricing for backward-compatible clients while
+// all tiers are exposed separately for richer UI display.
+func parseOpenRouterPricing(raw json.RawMessage) (map[string]string, []map[string]string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil, nil
 	}
-	n, err := strconv.ParseFloat(v, 64)
-	return err == nil && n == 0
+	switch trimmed[0] {
+	case '{':
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &obj); err != nil {
+			return nil, nil, err
+		}
+		pricing := scalarOpenRouterPricing(obj)
+		return pricing, nil, nil
+	case '[':
+		var rawTiers []map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &rawTiers); err != nil {
+			return nil, nil, err
+		}
+		tiers := make([]map[string]string, 0, len(rawTiers))
+		for _, rawTier := range rawTiers {
+			tiers = append(tiers, scalarOpenRouterPricing(rawTier))
+		}
+		if len(tiers) == 0 {
+			return nil, tiers, nil
+		}
+		return tiers[0], tiers, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported pricing JSON type")
+	}
+}
+
+var billablePriceKeys = []string{
+	"prompt", "completion", "request", "image", "web_search",
+	"internal_reasoning", "input_cache_read", "input_cache_write",
+}
+
+func pricingTierIsFree(pricing map[string]string) bool {
+	seenCore := false
+	for _, key := range billablePriceKeys {
+		v := strings.TrimSpace(pricing[key])
+		if v == "" {
+			continue
+		}
+		if key == "prompt" || key == "completion" {
+			seenCore = true
+		}
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil || n != 0 {
+			return false
+		}
+	}
+	return seenCore
+}
+
+func pricingIsFree(base map[string]string, tiers []map[string]string) bool {
+	if len(tiers) == 0 {
+		return pricingTierIsFree(base)
+	}
+	for _, tier := range tiers {
+		if !pricingTierIsFree(tier) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *manager) handleOpenRouterModelsFlexible(w http.ResponseWriter, r *http.Request) {
@@ -83,10 +158,15 @@ func (m *manager) handleOpenRouterModelsFlexible(w http.ResponseWriter, r *http.
 	}
 
 	freeOnly := r.URL.Query().Get("free") == "1"
-	out := make([]openRouterModelSummary, 0, len(decoded.Data))
+	out := make([]openRouterModelSummaryFlexible, 0, len(decoded.Data))
 	for _, item := range decoded.Data {
-		pricing := scalarOpenRouterPricing(item.Pricing)
-		free := strings.Contains(item.ID, ":free") || (scalarPriceZero(pricing, "prompt") && scalarPriceZero(pricing, "completion"))
+		pricing, pricingTiers, err := parseOpenRouterPricing(item.Pricing)
+		if err != nil {
+			// One unusual model must not break the whole catalog. Preserve the
+			// model and omit pricing rather than returning a 502 for every model.
+			pricing, pricingTiers = nil, nil
+		}
+		free := strings.Contains(item.ID, ":free") || pricingIsFree(pricing, pricingTiers)
 		if freeOnly && !free {
 			continue
 		}
@@ -94,9 +174,10 @@ func (m *manager) handleOpenRouterModelsFlexible(w http.ResponseWriter, r *http.
 		if name == "" {
 			name = item.ID
 		}
-		out = append(out, openRouterModelSummary{
+		out = append(out, openRouterModelSummaryFlexible{
 			ID: item.ID, Name: name, ContextLength: item.ContextLength,
-			Pricing: pricing, SupportedParameters: item.SupportedParameters, Free: free,
+			Pricing: pricing, PricingTiers: pricingTiers,
+			SupportedParameters: item.SupportedParameters, Free: free,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
