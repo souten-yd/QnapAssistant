@@ -12,10 +12,9 @@ import (
 	"time"
 )
 
-// Session-aware public handlers. With no session_id they are intentionally the
-// same as the 0.4.1 context handlers. A session_id adds only server-managed
-// rolling history and compact old-turn memory.
-
+// Session-aware public handlers. With no session_id they preserve stateless
+// behavior. A session_id adds server-managed rolling history and compact
+// old-turn memory independently of the selected LLM provider.
 func (m *manager) handleVoiceChatSessionAdaptive(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
@@ -63,25 +62,32 @@ func (m *manager) handleVoiceChatSession(w http.ResponseWriter, r *http.Request)
 
 	llmStart := time.Now()
 	if err := m.ensureReady(r.Context()); err != nil {
-		http.Error(w, "LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "LLM provider startup/configuration failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	llmPayload := voiceLLMPayloadStandard(cfg, asr.Text, false, controls)
-	lb, _ := json.Marshal(llmPayload)
-	lr, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, "http://127.0.0.1:"+cfg["BACKEND_PORT"]+"/v1/chat/completions", bytes.NewReader(lb))
-	lr.Header.Set("Content-Type", "application/json")
+	lr, err := m.prepareLLMRequest(r.Context(), cfg, llmPayload)
+	if err != nil {
+		http.Error(w, "LLM request preparation failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	releaseLLM := m.beginLLMUse()
 	lresp, err := client.Do(lr)
 	if err != nil {
+		releaseLLM()
 		http.Error(w, "LLM request failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	lbody, _ := io.ReadAll(io.LimitReader(lresp.Body, 4<<20))
 	lresp.Body.Close()
+	releaseLLM()
 	if lresp.StatusCode != http.StatusOK {
 		http.Error(w, "LLM request failed: "+string(lbody), http.StatusBadGateway)
 		return
 	}
 	var decoded struct {
+		Model    string `json:"model"`
+		Provider string `json:"provider"`
 		Choices []struct {
 			FinishReason string `json:"finish_reason"`
 			Message      struct {
@@ -144,6 +150,7 @@ func (m *manager) handleVoiceChatSession(w http.ResponseWriter, r *http.Request)
 
 	timings := map[string]any{
 		"asr_wall_ms": asrWall.Milliseconds(), "asr_engine_ms": asr.ProcessMS, "asr_rtf": asr.RTF,
+		"llm_provider": normalizedLLMProvider(cfg), "llm_model": decoded.Model, "llm_upstream_provider": decoded.Provider,
 		"llm_wall_ms": llmWall.Milliseconds(),
 		"llm_cache_n": decoded.Timings.CacheN, "llm_prompt_n": decoded.Timings.PromptN, "llm_prompt_ms": decoded.Timings.PromptMS,
 		"llm_predicted_n": decoded.Timings.PredictedN, "llm_predicted_ms": decoded.Timings.PredictedMS, "llm_tok_s": decoded.Timings.PredictedPerSecond,
@@ -195,7 +202,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := m.ensureReady(r.Context()); err != nil {
-		http.Error(w, "LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "LLM provider startup/configuration failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -207,8 +214,8 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	defer writer.Close()
 	transcriptTimings := map[string]any{
 		"asr_wall_ms": asrWall.Milliseconds(), "asr_engine_ms": asr.ProcessMS, "asr_rtf": asr.RTF,
-		"ready_ms": time.Since(requestStart).Milliseconds(), "llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls),
-		"llm_history_messages": len(controls.History),
+		"ready_ms": time.Since(requestStart).Milliseconds(), "llm_provider": normalizedLLMProvider(cfg),
+		"llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls), "llm_history_messages": len(controls.History),
 	}
 	addVoiceSessionTimings(transcriptTimings, sessionBefore)
 	if err := writer.WriteEvent(voiceStreamEvent{Type: "transcript", Transcript: asr.Text, Timings: transcriptTimings}); err != nil {
@@ -219,7 +226,7 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	llmClient := &http.Client{Timeout: 0}
 	llmStart := time.Now()
-	textChunks, llmResult := streamVoiceLLMStandard(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
+	textChunks, llmResult := m.streamVoiceLLMStandard(ctx, llmClient, cfg, profile, asr.Text, controls, llmStart)
 	firstTextMS := int64(0)
 	firstAudioMS := int64(0)
 	chunkIndex := 0
@@ -268,7 +275,8 @@ func (m *manager) handleVoiceChatStreamSession(w http.ResponseWriter, r *http.Re
 	}
 
 	doneTimings := map[string]any{
-		"asr_wall_ms": asrWall.Milliseconds(), "llm_wall_ms": llm.WallMS, "llm_first_token_ms": llm.FirstTokenMS,
+		"asr_wall_ms": asrWall.Milliseconds(), "llm_provider": normalizedLLMProvider(cfg),
+		"llm_wall_ms": llm.WallMS, "llm_first_token_ms": llm.FirstTokenMS,
 		"llm_predicted_n": llm.PredictedN, "llm_predicted_ms": llm.PredictedMS, "llm_tok_s": llm.TokPerSecond,
 		"llm_max_tokens": voiceMaxTokensTelemetry(cfg, controls), "llm_history_messages": len(controls.History),
 		"first_text_chunk_ms": firstTextMS, "first_audio_ready_ms": firstAudioMS, "stream_chunks": chunkIndex,
