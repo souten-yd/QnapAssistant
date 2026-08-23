@@ -49,7 +49,6 @@ func llmAutoUnload(c config) bool {
 	if _, ok := c["LLM_AUTO_UNLOAD"]; ok {
 		return boolConfig(c, "LLM_AUTO_UNLOAD", false)
 	}
-	// Backward compatibility with <=0.4.2.
 	return !keepModelsLoaded(c)
 }
 
@@ -180,7 +179,6 @@ func openRouterModelChain(c config) []string {
 				duplicate = true
 				break
 			}
-		}
 		if !duplicate {
 			out = append(out, model)
 		}
@@ -263,7 +261,6 @@ func applyOpenRouterPayload(c config, payload map[string]any) {
 	if provider := openRouterProviderPreferences(c); len(provider) > 0 {
 		payload["provider"] = provider
 	}
-	// llama.cpp-specific template knobs must never leak to OpenRouter.
 	delete(payload, "chat_template_kwargs")
 	if payload["reasoning_effort"] == "none" && strings.TrimSpace(c["OPENROUTER_REASONING_EFFORT"]) == "" {
 		delete(payload, "reasoning_effort")
@@ -281,6 +278,7 @@ func (m *manager) prepareLLMRequest(ctx context.Context, c config, payload map[s
 			return nil, fmt.Errorf("OpenRouter API key is not configured")
 		}
 		applyOpenRouterPayload(c, payload)
+		m.applyOpenRouterAutoFreeFallback(ctx, c, payload)
 		body, _ := json.Marshal(payload)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, openRouterBaseURL(c)+"/chat/completions", bytes.NewReader(body))
 		if err != nil {
@@ -443,8 +441,6 @@ func (m *manager) handleOpenRouterTest(w http.ResponseWriter, r *http.Request) {
 		in.MaxTokens = 8
 	}
 	if strings.TrimSpace(in.Model) == "" || !in.AllowPaid {
-		// Deliberately cheap/safe default for connectivity tests. OpenRouter's
-		// free router chooses only free model variants.
 		in.Model = "openrouter/free"
 	}
 	c, _ := loadConfig(m.configPath)
