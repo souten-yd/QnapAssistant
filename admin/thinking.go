@@ -64,7 +64,7 @@ func (m *manager) handleProxyWithThinking(w http.ResponseWriter, r *http.Request
 			return
 		}
 	} else {
-		if err := applyOpenRouterRequestConfig(r, cfg); err != nil {
+		if err := m.applyOpenRouterRequestConfig(r, cfg); err != nil {
 			http.Error(w, "OpenRouter request rewrite failed: "+err.Error(), http.StatusBadRequest)
 			return
 		}
