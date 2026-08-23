@@ -40,17 +40,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cancel obsolete QPKG runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for run_id in $(gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=50" --jq '.workflow_runs[] | select(.name == "Build QNAP QPKG" and (.status == "queued" or .status == "in_progress")) | .id'); do
-            if [ "$run_id" != "$GITHUB_RUN_ID" ]; then
-              echo "Cancelling obsolete QPKG run $run_id"
-              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
-            fi
-          done
-
       - name: Restore pinned llama runtime
         id: llama-cache
         uses: actions/cache@v4
