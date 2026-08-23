@@ -39,6 +39,7 @@ func saveConfig(path string, c config) error {
 		"ADMIN_PORT", "BACKEND_PORT", "THREADS", "THREADS_BATCH", "CONTEXT", "BATCH", "UBATCH", "PARALLEL", "THINKING_MODE", "KEEP_MODELS_LOADED", "IDLE_TIMEOUT_SECONDS", "EXTRA_ARGS",
 		"OPENROUTER_BASE_URL", "OPENROUTER_MODEL", "OPENROUTER_FALLBACK_MODELS", "OPENROUTER_PRESET", "OPENROUTER_TEMPERATURE", "OPENROUTER_TOP_P", "OPENROUTER_REASONING_EFFORT",
 		"OPENROUTER_PROVIDER_SORT", "OPENROUTER_ALLOW_FALLBACKS", "OPENROUTER_REQUIRE_PARAMETERS", "OPENROUTER_DATA_COLLECTION", "OPENROUTER_ZDR", "OPENROUTER_PROVIDER_ONLY", "OPENROUTER_PROVIDER_IGNORE", "OPENROUTER_MAX_PRICE_PROMPT", "OPENROUTER_MAX_PRICE_COMPLETION", "OPENROUTER_HTTP_REFERER", "OPENROUTER_X_TITLE",
+		"OPENROUTER_VOICE_AUTO_FALLBACK", "OPENROUTER_VOICE_FALLBACK_MAX_ATTEMPTS",
 		"VOICE_PORT", "VOICE_DIR", "ASR_MODEL_DIR", "TTS_MODEL_DIR", "ASR_LANGUAGE", "TTS_LANGUAGE", "ASR_THREADS", "TTS_THREADS", "TTS_STEPS", "TTS_SPEED", "TTS_SID", "VOICE_MAX_TOKENS",
 		"ASR_AUTO_UNLOAD", "ASR_IDLE_TIMEOUT_SECONDS", "TTS_AUTO_UNLOAD", "TTS_IDLE_TIMEOUT_SECONDS",
 		"VOICE_REPLY_MAX_TOKENS", "VOICE_REPLY_TEMPERATURE", "VOICE_SYSTEM_PROMPT", "VOICE_PROFILE_DEFAULT",
@@ -66,8 +67,6 @@ func defaults(c config) config {
 	if c == nil {
 		c = config{}
 	}
-	// Migrate the old global residency switch without changing behavior for an
-	// existing installation. New installs use the explicit per-model controls.
 	if _, ok := c["LLM_AUTO_UNLOAD"]; !ok {
 		legacyKeep := strings.ToLower(strings.TrimSpace(c["KEEP_MODELS_LOADED"]))
 		if legacyKeep == "0" || legacyKeep == "false" || legacyKeep == "off" || legacyKeep == "no" {
@@ -94,16 +93,15 @@ func defaults(c config) config {
 		"THINKING_MODE": "off", "KEEP_MODELS_LOADED": "1", "IDLE_TIMEOUT_SECONDS": "0", "EXTRA_ARGS": "",
 		"OPENROUTER_BASE_URL": defaultOpenRouterBaseURL, "OPENROUTER_MODEL": "openrouter/free", "OPENROUTER_FALLBACK_MODELS": "", "OPENROUTER_PRESET": "",
 		"OPENROUTER_TEMPERATURE": "", "OPENROUTER_TOP_P": "", "OPENROUTER_REASONING_EFFORT": "",
-		// Empty routing controls deliberately defer to OpenRouter's defaults.
-		// In particular provider fallback is enabled by OpenRouter by default.
 		"OPENROUTER_PROVIDER_SORT": "", "OPENROUTER_ALLOW_FALLBACKS": "", "OPENROUTER_REQUIRE_PARAMETERS": "", "OPENROUTER_DATA_COLLECTION": "", "OPENROUTER_ZDR": "",
 		"OPENROUTER_PROVIDER_ONLY": "", "OPENROUTER_PROVIDER_IGNORE": "", "OPENROUTER_MAX_PRICE_PROMPT": "", "OPENROUTER_MAX_PRICE_COMPLETION": "", "OPENROUTER_HTTP_REFERER": "", "OPENROUTER_X_TITLE": "QnapAssistant",
+		// Voice streaming reliability: retry another policy-compatible free model
+		// only on pre-stream HTTP 429/404 failures. Attempts include the primary.
+		"OPENROUTER_VOICE_AUTO_FALLBACK": "1", "OPENROUTER_VOICE_FALLBACK_MAX_ATTEMPTS": "3",
 		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
 		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
 		"ASR_LANGUAGE": "ja", "TTS_LANGUAGE": "ja", "ASR_THREADS": "4", "TTS_THREADS": "2", "TTS_STEPS": "4", "TTS_SPEED": "1.0", "TTS_SID": "0", "VOICE_MAX_TOKENS": "128",
 		"ASR_AUTO_UNLOAD": "0", "ASR_IDLE_TIMEOUT_SECONDS": "300", "TTS_AUTO_UNLOAD": "0", "TTS_IDLE_TIMEOUT_SECONDS": "300",
-		// 0 means omit max_tokens and inherit the selected OpenAI-compatible
-		// backend's standard completion limit.
 		"VOICE_REPLY_MAX_TOKENS": "0", "VOICE_REPLY_TEMPERATURE": "0.2",
 		"VOICE_SYSTEM_PROMPT": "あなたは音声アシスタントです。ユーザーの発話内容を踏まえて自然な日本語で答えてください。入力内容をそのまま繰り返すだけの返答を避け、質問や依頼に直接答えてください。説明が必要な場合は省略せず、内容に応じた必要十分な長さで回答してください。音声で不自然なMarkdown記号や絵文字は避けてください。",
 		"VOICE_PROFILE_DEFAULT": "generic",
