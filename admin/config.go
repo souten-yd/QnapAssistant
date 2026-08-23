@@ -94,7 +94,9 @@ func defaults(c config) config {
 		"THINKING_MODE": "off", "KEEP_MODELS_LOADED": "1", "IDLE_TIMEOUT_SECONDS": "0", "EXTRA_ARGS": "",
 		"OPENROUTER_BASE_URL": defaultOpenRouterBaseURL, "OPENROUTER_MODEL": "openrouter/free", "OPENROUTER_FALLBACK_MODELS": "", "OPENROUTER_PRESET": "",
 		"OPENROUTER_TEMPERATURE": "", "OPENROUTER_TOP_P": "", "OPENROUTER_REASONING_EFFORT": "",
-		"OPENROUTER_PROVIDER_SORT": "", "OPENROUTER_ALLOW_FALLBACKS": "1", "OPENROUTER_REQUIRE_PARAMETERS": "0", "OPENROUTER_DATA_COLLECTION": "", "OPENROUTER_ZDR": "",
+		// Empty routing controls deliberately defer to OpenRouter's defaults.
+		// In particular provider fallback is enabled by OpenRouter by default.
+		"OPENROUTER_PROVIDER_SORT": "", "OPENROUTER_ALLOW_FALLBACKS": "", "OPENROUTER_REQUIRE_PARAMETERS": "", "OPENROUTER_DATA_COLLECTION": "", "OPENROUTER_ZDR": "",
 		"OPENROUTER_PROVIDER_ONLY": "", "OPENROUTER_PROVIDER_IGNORE": "", "OPENROUTER_MAX_PRICE_PROMPT": "", "OPENROUTER_MAX_PRICE_COMPLETION": "", "OPENROUTER_HTTP_REFERER": "", "OPENROUTER_X_TITLE": "QnapAssistant",
 		"VOICE_PORT": "11437", "VOICE_DIR": "/share/Public/QnapAssistant/voice",
 		"ASR_MODEL_DIR": "/share/Public/QnapAssistant/voice/sensevoice", "TTS_MODEL_DIR": "/share/Public/QnapAssistant/voice/supertonic3",
