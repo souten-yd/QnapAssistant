@@ -158,8 +158,21 @@ func (m *manager) recordOpenRouterVoiceFailure(model string, class openRouterVoi
 	_ = m.saveOpenRouterVoiceHealthLocked(store)
 }
 
-func classifyOpenRouterVoiceFailure(status int, message string) openRouterVoiceFailureClass {
+func openRouterVoicePolicyFailureReason(message string) bool {
 	lower := strings.ToLower(strings.TrimSpace(message))
+	policySignals := []string{
+		"guardrail restrictions", "data policy", "privacy", "policy restriction",
+		"zero data retention", "zdr",
+	}
+	for _, signal := range policySignals {
+		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyOpenRouterVoiceFailure(status int, message string) openRouterVoiceFailureClass {
 	class := openRouterVoiceFailureClass{Status: status, Reason: strings.TrimSpace(message)}
 	switch status {
 	case http.StatusTooManyRequests:
@@ -170,15 +183,9 @@ func classifyOpenRouterVoiceFailure(status int, message string) openRouterVoiceF
 		class.Retry = true
 		// Only explicit endpoint-policy signals deserve a persistent blacklist.
 		// A plain "no endpoints" response can be transient availability.
-		policySignals := []string{
-			"guardrail restrictions", "data policy", "privacy", "policy restriction",
-			"zero data retention", "zdr",
-		}
-		for _, signal := range policySignals {
-			if strings.Contains(lower, signal) {
-				class.Blacklist = true
-				return class
-			}
+		if openRouterVoicePolicyFailureReason(message) {
+			class.Blacklist = true
+			return class
 		}
 		class.Cooldown = 10 * time.Minute
 		return class
@@ -209,6 +216,41 @@ func (m *manager) clearOpenRouterVoiceBlacklist(model string) error {
 	return m.saveOpenRouterVoiceHealthLocked(store)
 }
 
+// resetOpenRouterVoicePolicyState is intentionally narrower than a full history
+// reset. OpenRouter does not expose a policy revision id, and /models/user can
+// also change when models are added or removed. Therefore policy changes are
+// re-evaluated explicitly from the UI: policy-derived blacklists are cleared,
+// while successful/failed usage counts remain useful for ranking.
+func (m *manager) resetOpenRouterVoicePolicyState() error {
+	openRouterVoiceHealthMu.Lock()
+	store := m.loadOpenRouterVoiceHealthLocked()
+	for _, h := range store.Models {
+		if h == nil || !h.Blacklisted || !openRouterVoicePolicyFailureReason(h.BlacklistReason) {
+			continue
+		}
+		h.Blacklisted = false
+		h.BlacklistReason = ""
+		h.CooldownUntil = ""
+	}
+	err := m.saveOpenRouterVoiceHealthLocked(store)
+	openRouterVoiceHealthMu.Unlock()
+
+	// Force the next fallback/policy request to re-read /models/user rather than
+	// reusing the five-minute candidate cache.
+	openRouterFreeFallbackCache.Lock()
+	openRouterFreeFallbackCache.cacheKey = ""
+	openRouterFreeFallbackCache.at = time.Time{}
+	openRouterFreeFallbackCache.models = nil
+	openRouterFreeFallbackCache.Unlock()
+	return err
+}
+
+func (m *manager) resetOpenRouterVoiceHistory() error {
+	openRouterVoiceHealthMu.Lock()
+	defer openRouterVoiceHealthMu.Unlock()
+	return m.saveOpenRouterVoiceHealthLocked(emptyOpenRouterVoiceHealthStore())
+}
+
 func (m *manager) handleOpenRouterVoiceHealth(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -236,15 +278,23 @@ func (m *manager) handleOpenRouterVoiceHealth(w http.ResponseWriter, r *http.Req
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
-		if req.Action != "clear_blacklist" {
+		var err error
+		switch req.Action {
+		case "clear_blacklist":
+			err = m.clearOpenRouterVoiceBlacklist(req.Model)
+		case "reset_policy_state":
+			err = m.resetOpenRouterVoicePolicyState()
+		case "reset_history":
+			err = m.resetOpenRouterVoiceHistory()
+		default:
 			http.Error(w, "unsupported action", http.StatusBadRequest)
 			return
 		}
-		if err := m.clearOpenRouterVoiceBlacklist(req.Model); err != nil {
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "model": strings.TrimSpace(req.Model)})
+		writeJSON(w, map[string]any{"ok": true, "action": req.Action, "model": strings.TrimSpace(req.Model)})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
