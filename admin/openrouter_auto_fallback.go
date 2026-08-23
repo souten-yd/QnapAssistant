@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -26,9 +22,9 @@ type openRouterFreeFallbackCandidate struct {
 
 var openRouterFreeFallbackCache struct {
 	sync.Mutex
-	baseURL string
-	at      time.Time
-	models  []openRouterFreeFallbackCandidate
+	cacheKey string
+	at       time.Time
+	models   []openRouterFreeFallbackCandidate
 }
 
 func openRouterAutoFreeFallbackEnabled(c config) bool {
@@ -54,41 +50,31 @@ func copyFreeFallbackCandidates(in []openRouterFreeFallbackCandidate) []openRout
 }
 
 func (m *manager) fetchOpenRouterFreeFallbackCandidates(ctx context.Context, c config) ([]openRouterFreeFallbackCandidate, error) {
-	base := openRouterBaseURL(c)
+	key, err := m.readOpenRouterKey()
+	if err != nil {
+		return nil, err
+	}
+	// /models/user is filtered by this key's provider preferences, privacy
+	// settings and guardrails. That prevents known policy-blocked models from
+	// being inserted into the fallback chain in the first place.
+	cacheKey := openRouterBaseURL(c) + "|" + openRouterKeyFingerprint(key)
 	openRouterFreeFallbackCache.Lock()
-	if openRouterFreeFallbackCache.baseURL == base && !openRouterFreeFallbackCache.at.IsZero() && time.Since(openRouterFreeFallbackCache.at) < 5*time.Minute {
+	if openRouterFreeFallbackCache.cacheKey == cacheKey && !openRouterFreeFallbackCache.at.IsZero() && time.Since(openRouterFreeFallbackCache.at) < 5*time.Minute {
 		out := copyFreeFallbackCandidates(openRouterFreeFallbackCache.models)
 		openRouterFreeFallbackCache.Unlock()
 		return out, nil
 	}
 	openRouterFreeFallbackCache.Unlock()
 
-	fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, base+"/models?output_modalities=text", nil)
+	models, err := m.fetchOpenRouterPolicyCatalog(ctx, c, "/models/user", key)
 	if err != nil {
 		return nil, err
 	}
-	if key, _ := m.readOpenRouterKey(); key != "" {
-		m.applyOpenRouterHeaders(req, key, c)
-	}
-	resp, err := (&http.Client{Timeout: 6 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("OpenRouter models HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var decoded struct {
-		Data []openRouterCatalogModel `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
-		return nil, err
-	}
-	out := make([]openRouterFreeFallbackCandidate, 0, len(decoded.Data))
-	for _, item := range decoded.Data {
+	out := make([]openRouterFreeFallbackCandidate, 0, len(models))
+	for _, item := range models {
+		if !openRouterModelOutputsText(item) {
+			continue
+		}
 		pricing, tiers, err := parseOpenRouterPricing(item.Pricing)
 		if err != nil {
 			continue
@@ -106,8 +92,8 @@ func (m *manager) fetchOpenRouterFreeFallbackCandidates(ctx context.Context, c c
 		})
 	}
 	// Prefer larger-context fallbacks first. There is no reliable quality score
-	// in /models, and context headroom avoids turning one availability failure
-	// into a context-length failure on the next model.
+	// in /models/user, and context headroom avoids replacing one availability
+	// failure with a context-length failure.
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].ContextLength != out[j].ContextLength {
 			return out[i].ContextLength > out[j].ContextLength
@@ -115,7 +101,7 @@ func (m *manager) fetchOpenRouterFreeFallbackCandidates(ctx context.Context, c c
 		return strings.ToLower(out[i].ID) < strings.ToLower(out[j].ID)
 	})
 	openRouterFreeFallbackCache.Lock()
-	openRouterFreeFallbackCache.baseURL = base
+	openRouterFreeFallbackCache.cacheKey = cacheKey
 	openRouterFreeFallbackCache.at = time.Now()
 	openRouterFreeFallbackCache.models = copyFreeFallbackCandidates(out)
 	openRouterFreeFallbackCache.Unlock()
@@ -143,7 +129,6 @@ func fallbackCandidateSupportsPayload(candidate openRouterFreeFallbackCandidate,
 	}
 	for _, required := range []string{"tools", "tool_choice", "response_format", "reasoning", "reasoning_effort"} {
 		if payloadNeedsSupportedParameter(payload, required) && !supported[required] {
-			// Some models advertise structured_outputs instead of response_format.
 			if required == "response_format" && supported["structured_outputs"] {
 				continue
 			}
@@ -166,10 +151,10 @@ func setOpenRouterModelChain(payload map[string]any, models []string) {
 }
 
 // applyOpenRouterAutoFreeFallback uses OpenRouter's model-level `models` array
-// rather than issuing duplicate application-level HTTP retries. When enabled it
-// deliberately replaces the manual model fallback chain for this request:
-// the configured primary is tried first, followed only by distinct free models.
-// Turning the feature off restores the existing manual OPENROUTER_FALLBACK_MODELS behavior.
+// rather than issuing duplicate application-level HTTP retries. OpenRouter then
+// performs provider failover and cross-model fallback server-side for the same
+// logical request. This is both cheaper and less error-prone than blindly
+// resending the request from QnapAssistant.
 func (m *manager) applyOpenRouterAutoFreeFallback(ctx context.Context, c config, payload map[string]any) {
 	if !openRouterAutoFreeFallbackEnabled(c) {
 		return
@@ -198,8 +183,8 @@ func (m *manager) applyOpenRouterAutoFreeFallback(ctx context.Context, c config,
 			chain = append(chain, candidate.ID)
 		}
 	}
-	// Dynamic free router is a useful floor when the catalog is temporarily
-	// unavailable or there are fewer compatible explicit free variants.
+	// openrouter/free remains a final dynamic free-only floor when fewer than the
+	// requested number of explicit policy-compatible free variants are available.
 	if len(chain) < maxAttempts && !seen["openrouter/free"] {
 		chain = append(chain, "openrouter/free")
 	}
