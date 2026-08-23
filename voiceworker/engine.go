@@ -121,18 +121,21 @@ func (e *engine) ensureASR() error {
 		return errors.New("failed to create SenseVoice recognizer")
 	}
 	e.asr = r
+	markASRUsed()
 	return nil
 }
 
 func (e *engine) recognize(a pcmAudio) (asrResult, error) {
-	if err := e.ensureASR(); err != nil {
-		return asrResult{}, err
-	}
 	if len(a.Samples) == 0 || a.SampleRate <= 0 {
 		return asrResult{}, errors.New("empty audio")
 	}
+	// Keep the run lock across lazy load and decode so idle unloading cannot
+	// destroy the recognizer in the gap between ensureASR() and use.
 	e.asrRunMu.Lock()
 	defer e.asrRunMu.Unlock()
+	if err := e.ensureASR(); err != nil {
+		return asrResult{}, err
+	}
 	s := sherpa.NewOfflineStream(e.asr)
 	if s == nil {
 		return asrResult{}, errors.New("failed to create ASR stream")
@@ -143,6 +146,7 @@ func (e *engine) recognize(a pcmAudio) (asrResult, error) {
 	e.asr.Decode(s)
 	r := s.GetResult()
 	elapsed := time.Since(started)
+	markASRUsed()
 	audioSec := float64(len(a.Samples)) / float64(a.SampleRate)
 	out := asrResult{AudioSec: audioSec, ProcessMS: elapsed.Milliseconds()}
 	if audioSec > 0 {
@@ -179,6 +183,7 @@ func (e *engine) ensureSupertonic() error {
 		return errors.New("failed to create Supertonic 3 TTS")
 	}
 	e.tts = t
+	markTTSUsed()
 	return nil
 }
 
@@ -206,6 +211,9 @@ func (e *engine) synthesize(o ttsOptions) (ttsResult, error) {
 		backend = "piper_plus"
 	}
 	out, err := e.synthesizeBackend(backend, o)
+	if err == nil {
+		markTTSUsed()
+	}
 	if err == nil || explicit {
 		return out, err
 	}
@@ -215,6 +223,7 @@ func (e *engine) synthesize(o ttsOptions) (ttsResult, error) {
 	}
 	fallbackOut, fallbackErr := e.synthesizeBackend(fallback, o)
 	if fallbackErr == nil {
+		markTTSUsed()
 		fallbackOut.Backend = fallback + "-fallback"
 		return fallbackOut, nil
 	}
@@ -233,6 +242,9 @@ func (e *engine) synthesizeBackend(backend string, o ttsOptions) (ttsResult, err
 }
 
 func (e *engine) synthesizeSupertonic(o ttsOptions) (ttsResult, error) {
+	// Same run->load lock order as idle unload.
+	e.ttsRunMu.Lock()
+	defer e.ttsRunMu.Unlock()
 	if err := e.ensureSupertonic(); err != nil {
 		return ttsResult{}, err
 	}
@@ -251,11 +263,10 @@ func (e *engine) synthesizeSupertonic(o ttsOptions) (ttsResult, error) {
 	}
 	extra, _ := json.Marshal(map[string]any{"lang": lang})
 	gc := sherpa.GenerationConfig{Speed: o.Speed, NumSteps: o.Steps, Sid: o.Sid, Extra: json.RawMessage(extra)}
-	e.ttsRunMu.Lock()
-	defer e.ttsRunMu.Unlock()
 	started := time.Now()
 	audio := e.tts.GenerateWithConfig(o.Text, &gc, nil)
 	elapsed := time.Since(started)
+	markTTSUsed()
 	if audio == nil || audio.SampleRate <= 0 || len(audio.Samples) == 0 {
 		return ttsResult{}, errors.New("TTS generation failed")
 	}
@@ -269,14 +280,19 @@ func (e *engine) synthesizeSupertonic(o ttsOptions) (ttsResult, error) {
 
 func (e *engine) preload() error {
 	var failures []string
-	if err := e.ensureASR(); err != nil {
-		failures = append(failures, "ASR: "+err.Error())
+	if !asrAutoUnloadEnabled() {
+		if err := e.ensureASR(); err != nil {
+			failures = append(failures, "ASR: "+err.Error())
+		}
 	}
-	// Piper is the measured fast path and remains resident. Supertonic files are
-	// still auto-provisioned, but its ONNX sessions are loaded lazily only if the
-	// fallback is actually needed. This avoids an unused thread pool/RSS cost.
-	if _, err := e.synthesizePiper(ttsOptions{Text: "起動確認", Lang: e.cfg.TTSLanguage, Speed: e.cfg.TTSSpeed}); err != nil {
-		failures = append(failures, "Piper: "+err.Error())
+	// Piper stays hot only when TTS auto-unload is disabled. Supertonic remains
+	// a lazy fallback either way.
+	if !ttsAutoUnloadEnabled() {
+		if _, err := e.synthesizePiper(ttsOptions{Text: "起動確認", Lang: e.cfg.TTSLanguage, Speed: e.cfg.TTSSpeed}); err != nil {
+			failures = append(failures, "Piper: "+err.Error())
+		} else {
+			markTTSUsed()
+		}
 	}
 	if len(failures) > 0 {
 		return errors.New(strings.Join(failures, "; "))
@@ -285,19 +301,6 @@ func (e *engine) preload() error {
 }
 
 func (e *engine) close() {
-	e.piperRunMu.Lock()
-	e.stopPiperResidentLocked()
-	e.piperRunMu.Unlock()
-	e.asrLoadMu.Lock()
-	if e.asr != nil {
-		sherpa.DeleteOfflineRecognizer(e.asr)
-		e.asr = nil
-	}
-	e.asrLoadMu.Unlock()
-	e.ttsLoadMu.Lock()
-	if e.tts != nil {
-		sherpa.DeleteOfflineTts(e.tts)
-		e.tts = nil
-	}
-	e.ttsLoadMu.Unlock()
+	_ = e.unloadTTS()
+	_ = e.unloadASR()
 }
