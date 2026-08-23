@@ -58,12 +58,14 @@ func (m *manager) handleThinking(w http.ResponseWriter, r *http.Request) {
 func (m *manager) handleProxyWithThinking(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
-	// /think and /no_think are llama.cpp/Qwen template directives. They must
-	// never be injected into OpenRouter requests, where model-specific reasoning
-	// controls are configured separately.
 	if normalizedLLMProvider(cfg) == "local" {
 		if err := applyThinkingMode(r, cfg); err != nil {
 			http.Error(w, "thinking mode request rewrite failed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := applyOpenRouterRequestConfig(r, cfg); err != nil {
+			http.Error(w, "OpenRouter request rewrite failed: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
