@@ -24,6 +24,7 @@ func (m *manager) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (m *manager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
+	provider := normalizedLLMProvider(cfg)
 	m.mu.Lock()
 	running := m.backendRunningLocked()
 	active := m.activeRequests
@@ -34,65 +35,50 @@ func (m *manager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if running {
 		uptime = int64(time.Since(started).Seconds())
 	}
+	key, _ := m.readOpenRouterKey()
 	memTotal, memAvail, load1 := systemStats()
 	writeJSON(w, map[string]any{
-		"manager": true, "llm_loaded": running, "active_requests": active,
-		"uptime_seconds": uptime, "idle_timeout_seconds": intVal(cfg, "IDLE_TIMEOUT_SECONDS", 300),
-		"model_path": cfg["MODEL_PATH"], "admin_port": cfg["ADMIN_PORT"], "backend_port": cfg["BACKEND_PORT"],
+		"manager": true,
+		"llm_provider": provider,
+		"llm_loaded": running,
+		"llm_ready": (provider == "local" && running) || (provider == "openrouter" && key != ""),
+		"llm_auto_unload": llmAutoUnload(cfg),
+		"llm_idle_timeout_seconds": llmIdleTimeout(cfg),
+		"active_requests": active,
+		"uptime_seconds": uptime,
+		"idle_timeout_seconds": llmIdleTimeout(cfg),
+		"model_path": cfg["MODEL_PATH"],
+		"openrouter_model": cfg["OPENROUTER_MODEL"],
+		"openrouter_key_configured": key != "",
+		"openrouter_key_fingerprint": openRouterKeyFingerprint(key),
+		"admin_port": cfg["ADMIN_PORT"], "backend_port": cfg["BACKEND_PORT"],
 		"memory_total_bytes": memTotal, "memory_available_bytes": memAvail, "load1": load1, "download": dl,
 	})
 }
 
+// Deprecated internal implementation retained for compatibility with older
+// callers in this package. The public route uses handleConfigV04.
 func (m *manager) handleConfig(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		c, _ := loadConfig(m.configPath)
-		writeJSON(w, defaults(c))
-	case http.MethodPut:
-		var incoming config
-		if json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&incoming) != nil {
-			http.Error(w, "invalid JSON", 400)
-			return
-		}
-		c, _ := loadConfig(m.configPath)
-		c = defaults(c)
-		allowed := map[string]bool{"MODEL_PATH": true, "MODEL_DIR": true, "MODEL_URL": true, "MODEL_SHA256": true, "MIN_MODEL_BYTES": true, "ADMIN_PORT": true, "BACKEND_PORT": true, "THREADS": true, "THREADS_BATCH": true, "CONTEXT": true, "BATCH": true, "UBATCH": true, "PARALLEL": true, "IDLE_TIMEOUT_SECONDS": true, "EXTRA_ARGS": true}
-		for k, v := range incoming {
-			if allowed[k] {
-				c[k] = strings.TrimSpace(v)
-			}
-		}
-		if err := saveConfig(m.configPath, c); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		_ = m.stopBackend()
-		writeJSON(w, map[string]any{"ok": true, "note": "LLM unloaded; new settings apply on next request. ADMIN_PORT changes require QPKG restart."})
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	m.handleConfigV04(w, r)
 }
 
 func (m *manager) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if err := m.ensureReady(r.Context()); err != nil {
-		http.Error(w, "LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "LLM provider startup/configuration failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
+	release := m.beginLLMUse()
+	defer release()
+
+	if normalizedLLMProvider(cfg) == "openrouter" {
+		m.handleOpenRouterProxy(w, r, cfg)
+		return
+	}
 	target, _ := url.Parse("http://127.0.0.1:" + cfg["BACKEND_PORT"])
-	m.mu.Lock()
-	m.activeRequests++
-	m.lastUsed = time.Now()
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		m.activeRequests--
-		m.lastUsed = time.Now()
-		m.mu.Unlock()
-	}()
 	p := httputil.NewSingleHostReverseProxy(target)
-	p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) { http.Error(w, err.Error(), http.StatusBadGateway) }
+	p.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) { http.Error(w, err.Error(), http.StatusBadGateway) }
 	p.ServeHTTP(w, r)
 }
 
@@ -293,7 +279,9 @@ func (m *manager) handleLLMStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	c, _ := loadConfig(m.configPath)
+	c = defaults(c)
+	writeJSON(w, map[string]any{"ok": true, "provider": normalizedLLMProvider(c)})
 }
 func (m *manager) handleLLMStop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -313,7 +301,9 @@ func (m *manager) handleLLMRestart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	c, _ := loadConfig(m.configPath)
+	c = defaults(c)
+	writeJSON(w, map[string]any{"ok": true, "provider": normalizedLLMProvider(c)})
 }
 func (m *manager) handleUI(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
