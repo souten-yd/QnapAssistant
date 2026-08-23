@@ -22,12 +22,12 @@ func main() {
 	e := &engine{cfg: cfg}
 	defer e.close()
 
-	// Resident mode: load ASR, Supertonic fallback and Piper/Tsukuyomi once.
-	// The management service waits for /health, so requests arriving after
-	// startup see hot models rather than paying model-load cost.
+	// Each model decides independently whether it should be hot at startup.
+	// Auto-unloaded models are loaded lazily by their first request.
 	if err := e.preload(); err != nil {
 		log.Printf("voice preload completed with errors: %v", err)
 	}
+	go e.idleUnloadLoop()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -48,6 +48,10 @@ func main() {
 			"piper_resident":             piperResident,
 			"piper_uptime_seconds":       piperUptime,
 			"piper_requests":             piperRequests,
+			"asr_auto_unload":            asrAutoUnloadEnabled(),
+			"asr_idle_timeout_seconds":   asrIdleSeconds(),
+			"tts_auto_unload":            ttsAutoUnloadEnabled(),
+			"tts_idle_timeout_seconds":   ttsIdleSeconds(),
 			"asr_threads":                cfg.ASRThreads,
 			"tts_threads":                cfg.TTSThreads,
 			"tts_steps":                  cfg.TTSSteps,
