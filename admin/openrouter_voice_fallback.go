@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -162,11 +161,6 @@ func (m *manager) recordOpenRouterModelFailure(model string, class openRouterRet
 	_ = m.saveOpenRouterFallbackStoreLocked(store)
 }
 
-func (m *manager) markOpenRouterPolicyFiltered(model, reason string) {
-	class := openRouterRetryClass{Status: http.StatusNotFound, Retry: true, Blacklist: true, Reason: reason}
-	m.recordOpenRouterModelFailure(model, class)
-}
-
 func classifyOpenRouterRetryError(err error) openRouterRetryClass {
 	if err == nil {
 		return openRouterRetryClass{}
@@ -194,8 +188,6 @@ func classifyOpenRouterRetryError(err error) openRouterRetryClass {
 			return class
 		}
 	}
-	// A generic 404 can be transient endpoint availability or a recently removed
-	// model. Do not permanently blacklist it without a policy signal.
 	class.Cooldown = 10 * time.Minute
 	return class
 }
@@ -241,16 +233,12 @@ func (m *manager) healthyOpenRouterFallbackCandidates(ctx context.Context, c con
 		}
 		out = append(out, model)
 	}
-	// Randomize equivalent healthy free models so a shared upstream pool is not
-	// hammered in a fixed order. Historical health is still persisted/displayed.
 	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 	return out, nil
 }
 
-// streamVoiceLLMStandardWithFallback wraps the existing stream implementation.
-// It retries only before any text chunk has been emitted; switching models after
-// speech has started would splice two answers together and is intentionally not
-// attempted.
+// streamVoiceLLMStandardWithFallback retries only pre-stream failures. The
+// normal success path does not call /models/user, preserving voice latency.
 func (m *manager) streamVoiceLLMStandardWithFallback(ctx context.Context, client *http.Client, cfg config, profile voiceClientProfile, transcript string, controls voiceChatControls, llmStart time.Time) (<-chan string, <-chan voiceLLMContextStreamResult) {
 	chunks := make(chan string, 8)
 	result := make(chan voiceLLMContextStreamResult, 1)
@@ -260,7 +248,12 @@ func (m *manager) streamVoiceLLMStandardWithFallback(ctx context.Context, client
 		if normalizedLLMProvider(cfg) != "openrouter" || !openRouterVoiceFallbackEnabled(cfg) {
 			innerChunks, innerResult := m.streamVoiceLLMStandard(ctx, client, cfg, profile, transcript, controls, llmStart)
 			for text := range innerChunks {
-				chunks <- text
+				select {
+				case chunks <- text:
+				case <-ctx.Done():
+					result <- voiceLLMContextStreamResult{Err: ctx.Err()}
+					return
+				}
 			}
 			result <- <-innerResult
 			return
@@ -268,27 +261,43 @@ func (m *manager) streamVoiceLLMStandardWithFallback(ctx context.Context, client
 
 		maxAttempts := openRouterVoiceFallbackMaxAttempts(cfg)
 		attempted := map[string]bool{}
-		candidates := []string{primary}
-		fallbacks, _ := m.healthyOpenRouterFallbackCandidates(ctx, cfg, attempted)
-		for _, model := range fallbacks {
-			if model != primary {
-				candidates = append(candidates, model)
-			}
+		queue := []string{}
+		h := m.openRouterFallbackSnapshot()[primary]
+		if !h.Blacklisted && !healthCooldownActive(h, time.Now()) {
+			queue = append(queue, primary)
+		} else {
+			attempted[primary] = true
 		}
-		if len(candidates) > maxAttempts {
-			candidates = candidates[:maxAttempts]
-		}
-
+		fallbackLoaded := false
 		var last voiceLLMContextStreamResult
-		for _, model := range candidates {
+
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if len(queue) == 0 && !fallbackLoaded {
+				fallbackLoaded = true
+				fallbacks, err := m.healthyOpenRouterFallbackCandidates(ctx, cfg, attempted)
+				if err != nil {
+					if last.Err == nil {
+						last.Err = fmt.Errorf("OpenRouter fallback candidate lookup failed: %w", err)
+					}
+					break
+				}
+				queue = append(queue, fallbacks...)
+			}
+			if len(queue) == 0 {
+				break
+			}
+			model := queue[0]
+			queue = queue[1:]
 			if attempted[model] {
+				attempt--
 				continue
 			}
 			attempted[model] = true
+
 			attemptCfg := cloneConfig(cfg)
 			attemptCfg["OPENROUTER_MODEL"] = model
-			// Keep provider failover within the selected model, but make model
-			// fallback explicit here so health/blacklist accounting stays accurate.
+			// Provider fallback stays enabled for the same model. Cross-model
+			// fallback is handled here so health/blacklist accounting is exact.
 			attemptCfg["OPENROUTER_FALLBACK_MODELS"] = ""
 			innerChunks, innerResult := m.streamVoiceLLMStandard(ctx, client, attemptCfg, profile, transcript, controls, llmStart)
 			emitted := false
@@ -313,9 +322,16 @@ func (m *manager) streamVoiceLLMStandardWithFallback(ctx context.Context, client
 				result <- last
 				return
 			}
+			if !fallbackLoaded {
+				fallbackLoaded = true
+				fallbacks, err := m.healthyOpenRouterFallbackCandidates(ctx, cfg, attempted)
+				if err == nil {
+					queue = append(queue, fallbacks...)
+				}
+			}
 		}
 		if last.Err == nil {
-			last.Err = fmt.Errorf("OpenRouter voice fallback exhausted without a reply")
+			last.Err = fmt.Errorf("OpenRouter voice fallback exhausted without a policy-compatible free model")
 		}
 		result <- last
 	}()
@@ -390,12 +406,4 @@ func (m *manager) handleOpenRouterFallback(w http.ResponseWriter, r *http.Reques
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
-}
-
-func parsePositiveInt(value string, d int) int {
-	n, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || n <= 0 {
-		return d
-	}
-	return n
 }
