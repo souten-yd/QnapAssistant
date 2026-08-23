@@ -28,7 +28,7 @@ func (m *manager) handleThinking(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			mode = "off"
 		}
-		writeJSON(w, map[string]any{"mode": mode})
+		writeJSON(w, map[string]any{"mode": mode, "applies_to": "local_qwen"})
 	case http.MethodPut:
 		var req struct {
 			Mode string `json:"mode"`
@@ -58,9 +58,14 @@ func (m *manager) handleThinking(w http.ResponseWriter, r *http.Request) {
 func (m *manager) handleProxyWithThinking(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
-	if err := applyThinkingMode(r, cfg); err != nil {
-		http.Error(w, "thinking mode request rewrite failed: "+err.Error(), http.StatusBadRequest)
-		return
+	// /think and /no_think are llama.cpp/Qwen template directives. They must
+	// never be injected into OpenRouter requests, where model-specific reasoning
+	// controls are configured separately.
+	if normalizedLLMProvider(cfg) == "local" {
+		if err := applyThinkingMode(r, cfg); err != nil {
+			http.Error(w, "thinking mode request rewrite failed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	m.handleProxy(w, r)
 }
