@@ -26,17 +26,22 @@ type openRouterPolicyCatalogModel struct {
 }
 
 type openRouterPolicyModelSummary struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	ContextLength       int                 `json:"context_length,omitempty"`
-	Pricing             map[string]string   `json:"pricing,omitempty"`
-	PricingTiers        []map[string]string `json:"pricing_tiers,omitempty"`
-	SupportedParameters []string            `json:"supported_parameters,omitempty"`
-	Free                bool                `json:"free"`
-	PolicyChecked       bool                `json:"policy_checked"`
-	PolicyAllowed       bool                `json:"policy_allowed"`
-	PolicyStatus        string              `json:"policy_status"`
-	Moderated           bool                `json:"moderated"`
+	ID                   string              `json:"id"`
+	Name                 string              `json:"name"`
+	ContextLength        int                 `json:"context_length,omitempty"`
+	Pricing              map[string]string   `json:"pricing,omitempty"`
+	PricingTiers         []map[string]string `json:"pricing_tiers,omitempty"`
+	SupportedParameters  []string            `json:"supported_parameters,omitempty"`
+	Free                 bool                `json:"free"`
+	PolicyChecked        bool                `json:"policy_checked"`
+	PolicyAllowed        bool                `json:"policy_allowed"`
+	PolicyStatus         string              `json:"policy_status"`
+	Moderated            bool                `json:"moderated"`
+	VoiceSuccessCount    int                 `json:"voice_success_count"`
+	VoiceFailureCount    int                 `json:"voice_failure_count"`
+	VoiceBlacklisted     bool                `json:"voice_blacklisted"`
+	VoiceBlacklistReason string              `json:"voice_blacklist_reason,omitempty"`
+	VoiceCooldownUntil   string              `json:"voice_cooldown_until,omitempty"`
 }
 
 func openRouterModelOutputsText(m openRouterPolicyCatalogModel) bool {
@@ -122,6 +127,7 @@ func (m *manager) handleOpenRouterModelsPolicyAware(w http.ResponseWriter, r *ht
 		}
 	}
 
+	health := m.openRouterVoiceHealthSnapshot()
 	freeOnly := r.URL.Query().Get("free") == "1"
 	out := make([]openRouterPolicyModelSummary, 0, len(allModels))
 	for _, item := range allModels {
@@ -150,17 +156,24 @@ func (m *manager) handleOpenRouterModelsPolicyAware(w http.ResponseWriter, r *ht
 		if name == "" {
 			name = item.ID
 		}
+		h := health[item.ID]
 		out = append(out, openRouterPolicyModelSummary{
 			ID: item.ID, Name: name, ContextLength: item.ContextLength,
 			Pricing: pricing, PricingTiers: tiers,
 			SupportedParameters: item.SupportedParameters, Free: free,
 			PolicyChecked: policyChecked, PolicyAllowed: allowed,
 			PolicyStatus: status, Moderated: item.TopProvider.IsModerated,
+			VoiceSuccessCount: h.SuccessCount, VoiceFailureCount: h.FailureCount,
+			VoiceBlacklisted: h.Blacklisted, VoiceBlacklistReason: h.BlacklistReason,
+			VoiceCooldownUntil: h.CooldownUntil,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].PolicyAllowed != out[j].PolicyAllowed {
 			return out[i].PolicyAllowed
+		}
+		if out[i].VoiceBlacklisted != out[j].VoiceBlacklisted {
+			return !out[i].VoiceBlacklisted
 		}
 		if out[i].Free != out[j].Free {
 			return out[i].Free
