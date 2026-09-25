@@ -26,8 +26,10 @@ if ! [[ "$SCRIPT_LEN" =~ ^[0-9]+$ && "$CONTROL_PAD" =~ ^[0-9]+$ && "$DATA_SIZE" 
 fi
 
 DATA_OFFSET=$((SCRIPT_LEN + CONTROL_PAD))
-tail -c +$((DATA_OFFSET + 1)) "$QPKG" | head -c "$DATA_SIZE" > "$EXTRACT/data.tar.xz"
-tar -xJf "$EXTRACT/data.tar.xz" -C "$EXTRACT"
+# QDK may package gzip or xz payloads. Read exactly the payload bytes without
+# a tail/head pipe (which can fail with SIGPIPE under pipefail).
+dd if="$QPKG" of="$EXTRACT/data.tar" bs=1M skip="$DATA_OFFSET" count="$DATA_SIZE" iflag=skip_bytes,count_bytes status=none
+tar --no-same-owner -xf "$EXTRACT/data.tar" -C "$EXTRACT" ./bin/llama-server ./bin/llama-bench
 
 cp "$EXTRACT/bin/llama-server" "$ROOT/x86_64/bin/llama-server"
 cp "$EXTRACT/bin/llama-bench" "$ROOT/x86_64/bin/llama-bench"
