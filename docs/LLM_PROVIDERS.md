@@ -232,3 +232,60 @@ fallbacks cannot leak into free-only mode.
 
 Other OpenAI-compatible endpoints are proxied without a request-body rewrite.
 When `LLM_PROVIDER=local`, behavior remains the existing local llama.cpp path.
+
+## Local GGUF download presets
+
+The Local GGUF models card includes **Ornith 1.0 9B Q4_K_M**
+(`ornith-1.0-9b-Q4_K_M.gguf`, approximately 5.63 GB) from the
+[publisher's GGUF repository](https://huggingface.co/ornith-ai/Ornith-1.0-9B-GGUF).
+The preset pins revision `d6b5f9b2ef835df5085615e0c405ce0092cc8b53` and supplies
+SHA-256 `5720d1f671b4996481274fffe01868c3c36e87c135cc8538471cc7bd6087b106`
+to the existing download API for verification before installation.
+
+1. Select the download preset to fill URL, filename and SHA-256.
+2. Click **Download to Public** and wait for completion.
+3. Select the downloaded file from the local model list and click **Select local model**.
+4. Use **Load / Check** to load it.
+
+Choosing a preset does not download, load or switch models automatically. Custom
+URLs remain supported; selecting the custom option clears all three download
+fields, including the preset checksum. Downloads use `MODEL_DIR` (normally
+`/share/Public`). The installed default and existing user configuration remain
+unchanged.
+
+Ornith is a reasoning model specialized for agentic coding. The Local Qwen3
+Thinking switch does not apply to its filename. Its download size is not total
+runtime memory usage, and NAS inference speed/quality have not been measured.
+This preset does not update the bundled llama.cpp runtime or enable tool execution.
+
+Smaller alternatives are also available in the same selector, using Unsloth GGUFs:
+
+| Model (Q4_K_M) | Download size | Intended choice |
+| --- | --- | --- |
+| Qwen3-4B-Instruct-2507 | 2.50 GB | Non-thinking conversation; try first when prioritizing quality |
+| Qwen3-1.7B | 1.11 GB | Lower memory/compute needs; quality must be assessed on your tasks |
+
+- [Qwen3-4B-Instruct-2507](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF): revision `18727206c51467496bfba014368bd0a30e97f411`, SHA-256 `3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`.
+- [Qwen3-1.7B](https://huggingface.co/unsloth/Qwen3-1.7B-GGUF): revision `bd59ef4c1c7af8b7ade0d473f3ab0d48b9f1d338`, SHA-256 `b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897`.
+
+For 4B Instruct, use Thinking **passthrough** (it is a non-thinking model); for 1.7B, start with Thinking **off** to limit response latency. Preset selection does not change this setting.
+
+### Download status and model selection
+
+`GET /api/models/download` returns the current in-memory transfer status:
+`idle`, `connecting`, `downloading`, `verifying`, `complete`, or `failed`, plus
+filename/path, written/total bytes, average bytes/second, timestamps and errors.
+An unknown total is shown without a percentage. Status resets on service restart;
+completed model files remain discoverable via `GET /api/models`.
+
+The UI polls download status independently every second, so voice/provider errors
+cannot prevent progress display. On completion the downloaded model is highlighted
+in the local list; **Select local model** explicitly saves the selection. List
+refresh preserves a user's pending choice instead of resetting it every five seconds.
+
+Hugging Face `/blob/` URLs are converted to `/resolve/`. HTTP errors, invalid GGUF
+headers, truncated transfers, checksum mismatches and filesystem errors are shown.
+The downloader follows redirects with TLS verification enabled, limits response
+header waits to 30 seconds, and aborts after 60 seconds without body data. Failed
+partial files are removed and existing installed files are preserved. Click
+**Download to Public** again to retry from the beginning; resume is not implemented.

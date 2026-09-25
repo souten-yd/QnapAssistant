@@ -2,10 +2,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -160,114 +157,6 @@ func (m *manager) handleModelSelect(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.stopBackend()
 	writeJSON(w, map[string]any{"ok": true, "model_path": clean})
-}
-
-func (m *manager) handleModelDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		URL      string `json:"URL"`
-		Filename string `json:"Filename"`
-		SHA256   string `json:"SHA256"`
-	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.URL == "" || req.Filename == "" {
-		http.Error(w, "url and filename required", 400)
-		return
-	}
-	u, err := url.Parse(req.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		http.Error(w, "download URL must use http or https", 400)
-		return
-	}
-	name := filepath.Base(req.Filename)
-	if name != req.Filename || !strings.HasSuffix(strings.ToLower(name), ".gguf") {
-		http.Error(w, "filename must end in .gguf", 400)
-		return
-	}
-	c, _ := loadConfig(m.configPath)
-	c = defaults(c)
-	dest := filepath.Join(c["MODEL_DIR"], name)
-	m.mu.Lock()
-	if m.download.Active {
-		m.mu.Unlock()
-		http.Error(w, "a download is already active", 409)
-		return
-	}
-	m.download = downloadState{Active: true, Name: name}
-	m.mu.Unlock()
-	go m.downloadURL(req.URL, dest, req.SHA256)
-	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, map[string]any{"ok": true, "path": dest})
-}
-
-func (m *manager) downloadURL(src, dest, wantHash string) {
-	defer func() { m.mu.Lock(); m.download.Active = false; m.mu.Unlock() }()
-	tmp := dest + ".part"
-	_ = os.MkdirAll(filepath.Dir(dest), 0755)
-	resp, err := http.Get(src)
-	if err != nil {
-		m.setDownloadErr(err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		m.setDownloadErr(fmt.Errorf("HTTP %s", resp.Status))
-		return
-	}
-	f, err := os.Create(tmp)
-	if err != nil {
-		m.setDownloadErr(err)
-		return
-	}
-	h := sha256.New()
-	buf := make([]byte, 1<<20)
-	var written int64
-	writer := io.MultiWriter(f, h)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			wn, writeErr := writer.Write(buf[:n])
-			written += int64(wn)
-			m.mu.Lock()
-			m.download.Written, m.download.Total = written, resp.ContentLength
-			m.mu.Unlock()
-			if writeErr != nil {
-				readErr = writeErr
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			_ = f.Close()
-			m.setDownloadErr(readErr)
-			return
-		}
-	}
-	if err := f.Close(); err != nil {
-		m.setDownloadErr(err)
-		return
-	}
-	actual := hex.EncodeToString(h.Sum(nil))
-	if wantHash != "" && !strings.EqualFold(actual, wantHash) {
-		m.setDownloadErr(fmt.Errorf("SHA-256 mismatch: %s", actual))
-		return
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		m.setDownloadErr(err)
-		return
-	}
-	m.mu.Lock()
-	m.download.Error = ""
-	m.mu.Unlock()
-}
-
-func (m *manager) setDownloadErr(err error) {
-	m.mu.Lock()
-	m.download.Error = err.Error()
-	m.mu.Unlock()
 }
 
 func (m *manager) handleLLMStart(w http.ResponseWriter, r *http.Request) {
