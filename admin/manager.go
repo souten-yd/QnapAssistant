@@ -17,11 +17,16 @@ import (
 )
 
 type downloadState struct {
-	Active  bool   `json:"active"`
-	Name    string `json:"name,omitempty"`
-	Written int64  `json:"written_bytes,omitempty"`
-	Total   int64  `json:"total_bytes,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Status         string    `json:"status"`
+	Path           string    `json:"path,omitempty"`
+	StartedAt      time.Time `json:"started_at,omitempty"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	BytesPerSecond float64   `json:"bytes_per_second,omitempty"`
+	Active         bool      `json:"active"`
+	Name           string    `json:"name,omitempty"`
+	Written        int64     `json:"written_bytes,omitempty"`
+	Total          int64     `json:"total_bytes,omitempty"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type manager struct {

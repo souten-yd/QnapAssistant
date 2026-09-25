@@ -75,5 +75,6 @@ fi
 [ -x "$ROOT/x86_64/bin/qnap-voice-worker" ] || { echo "voice worker binary missing" >&2; exit 1; }
 [ -f "$ROOT/icons/QnapAssistant.png" ] || { echo "QPKG icon missing" >&2; exit 1; }
 [ -f "$ROOT/icons/QnapAssistant_80.png" ] || { echo "QPKG 80px icon missing" >&2; exit 1; }
+node "$ROOT/scripts/test-local-model-ui.cjs"
 (cd "$ROOT/admin" && go test ./... && go vet ./...)
 echo "Static validation passed."

@@ -26,7 +26,7 @@ permissions:
 env:
   LLAMA_CPP_COMMIT: 6d05498314db1b57f81c271080018aa2d0b89be9
   QDK_COMMIT: 78c77b898fecba8f860b630177248b5fa3f5baaf
-  BASELINE_QPKG_RUN: "32223913831"
+  BASELINE_QPKG_RELEASE: "v0.5.5"
   RUNTIME_CACHE_VERSION: "ts253be-sse42-static-v1"
   SHERPA_ONNX_VERSION: "1.13.4"
   SHERPA_GO_LINUX_COMMIT: "a424c836679c18e71d7afcab293ea5ecf539044f"
@@ -58,7 +58,11 @@ jobs:
         run: |
           rm -rf .bootstrap
           mkdir -p .bootstrap
-          gh run download "$BASELINE_QPKG_RUN" -n QnapAssistant-x86_64 -D .bootstrap
+          gh release download "$BASELINE_QPKG_RELEASE" --pattern '*.qpkg' --pattern '*.qpkg.sha256' -D .bootstrap
+          baseline=".bootstrap/QnapAssistant_${BASELINE_QPKG_RELEASE#v}_x86_64.qpkg"
+          expected=$(awk 'NR == 1 {print $1}' "$baseline.sha256")
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]]
+          printf '%s  %s\n' "$expected" "$baseline" | sha256sum -c -
           ./scripts/bootstrap-llama-from-qpkg.sh .bootstrap
 
       - name: Rebuild llama runtime only when explicitly allowed
