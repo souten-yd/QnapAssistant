@@ -158,3 +158,11 @@ func (m *manager) handleJobDiagnostics(w http.ResponseWriter,r *http.Request,job
  w.Header().Set("X-Content-Type-Options","nosniff")
  writeJSON(w,info)
 }
+
+func (m *manager) markGenerationTimeout(j *llmJob) {
+ m.jobsMu.Lock()
+ hasOutput:=j.partialOutput!=""
+ m.jobsMu.Unlock()
+ if hasOutput{m.markJob(j,"timed_out","generation_timeout_partial","generation timed out with partial output",nil)
+ }else{m.markJob(j,"timed_out","generation_first_token_timeout","generation timed out before first content token",nil)}
+}
