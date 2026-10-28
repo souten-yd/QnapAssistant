@@ -53,6 +53,28 @@ func (m *manager) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleMemorySnapshot samples Linux MemAvailable without loading the
+// application config, model state or any persistent statistics. A polling UI
+// can call this every second without generating logs or disk writes.
+func (m *manager) handleMemorySnapshot(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        w.Header().Set("Allow", "GET")
+        http.Error(w, "GET required", http.StatusMethodNotAllowed)
+        return
+    }
+    total, available, _ := systemStats()
+    if total <= 0 || available < 0 || available > total {
+        http.Error(w, "memory statistics unavailable", http.StatusServiceUnavailable)
+        return
+    }
+    w.Header().Set("Cache-Control", "no-store")
+    writeJSON(w, map[string]any{
+        "total_bytes": total,
+        "available_bytes": available,
+        "sampled_at_unix_ms": time.Now().UnixMilli(),
+    })
+}
+
 // Deprecated internal implementation retained for compatibility with older
 // callers in this package. The public route uses handleConfigV04.
 func (m *manager) handleConfig(w http.ResponseWriter, r *http.Request) {
