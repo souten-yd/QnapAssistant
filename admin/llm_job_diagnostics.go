@@ -149,6 +149,7 @@ func (m *manager) handleJobDiagnostics(w http.ResponseWriter,r *http.Request,job
   "finish_reason":j.finishReason,"model":j.model,"context_size":j.contextSize,
   "raw_output_available":output!="",
   "raw_output_persisted":false,
+  "min_memory_available_bytes":j.minMemoryAvailableBytes,
   "input_bytes":j.inputBytes,
   "generated_at_unix_ms":end.UnixMilli(),
  }
