@@ -109,7 +109,7 @@ func (m *manager) handleLocalLLMTest(w http.ResponseWriter, r *http.Request) {
     release := m.beginLLMUse()
     defer release()
 
-    client := &http.Client{Transport: &http.Transport{
+    client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{
         Proxy: nil,
         DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
     }}
