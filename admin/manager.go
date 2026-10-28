@@ -38,6 +38,9 @@ type manager struct {
 	startedAt      time.Time
 	lastUsed       time.Time
 	activeRequests int
+	jobsMu sync.Mutex
+	jobs map[string]*llmJob
+	jobQueue chan *llmJob
 	download       downloadState
 }
 
@@ -112,6 +115,12 @@ func (m *manager) startBackend() error {
 }
 
 func (m *manager) stopBackend() error {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.stopBackendLocked()
+}
+
+func (m *manager) stopBackendLocked() error {
 	m.mu.Lock()
 	cmd := m.cmd
 	if cmd == nil || cmd.Process == nil {
@@ -141,7 +150,7 @@ func (m *manager) ensureReady(ctx context.Context) error {
 	if err := m.startBackend(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(llmLoadTimeout(cfg))*time.Second)
 	defer cancel()
 	healthURL := "http://127.0.0.1:" + cfg["BACKEND_PORT"] + "/health"
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -156,7 +165,7 @@ func (m *manager) ensureReady(ctx context.Context) error {
 			if err == nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				if resp.StatusCode < 500 {
+				if resp.StatusCode == http.StatusOK {
 					return nil
 				}
 			}
@@ -174,10 +183,12 @@ func (m *manager) ensureReady(ctx context.Context) error {
 // the middle of a voice request. It is harmless for OpenRouter and also gives
 // status consumers a consistent active request count.
 func (m *manager) beginLLMUse() func() {
+	m.startMu.Lock()
 	m.mu.Lock()
 	m.activeRequests++
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
+	m.startMu.Unlock()
 	return func() {
 		m.mu.Lock()
 		if m.activeRequests > 0 {
@@ -206,12 +217,16 @@ func (m *manager) idleLoop() {
 		if idle <= 0 {
 			continue
 		}
+		m.startMu.Lock()
 		m.mu.Lock()
 		should := m.backendRunningLocked() && m.activeRequests == 0 && time.Since(m.lastUsed) > time.Duration(idle)*time.Second
 		m.mu.Unlock()
 		if should {
+			// Hold startMu through the stop, preventing a new request lease
+			// or model start between the idle check and termination.
 			log.Printf("LLM idle timeout reached; unloading local model")
-			_ = m.stopBackend()
+			m.stopBackendLocked()
 		}
+		m.startMu.Unlock()
 	}
 }
