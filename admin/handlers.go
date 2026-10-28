@@ -82,15 +82,15 @@ func (m *manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *manager) handleProxy(w http.ResponseWriter, r *http.Request) {
+	// Register activity before loading so idle-unload cannot interrupt startup.
+	release := m.beginLLMUse()
+	defer release()
 	if err := m.ensureReady(r.Context()); err != nil {
 		http.Error(w, "LLM provider startup/configuration failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	cfg, _ := loadConfig(m.configPath)
 	cfg = defaults(cfg)
-	release := m.beginLLMUse()
-	defer release()
-
 	if normalizedLLMProvider(cfg) == "openrouter" {
 		m.handleOpenRouterProxy(w, r, cfg)
 		return
