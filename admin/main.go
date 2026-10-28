@@ -31,6 +31,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", m.handleHealth)
 	mux.HandleFunc("/api/status", m.handleStatus)
+	mux.HandleFunc("/api/system/memory", m.handleMemorySnapshot)
 	mux.HandleFunc("/api/bootstrap", m.handleBootstrapStatus)
 	mux.HandleFunc("/api/config", m.handleConfigV04)
 	mux.HandleFunc("/api/thinking", m.handleThinking)

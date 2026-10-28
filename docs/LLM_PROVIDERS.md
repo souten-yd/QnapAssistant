@@ -405,3 +405,37 @@ example Qwen3-8B Q4_K_M with `CONTEXT=16384`).
 
 This is a manual interactive diagnostic. It does not implement SelfCare-side
 automatic weekly data collection, injection or clinical review.
+
+### Live RAM availability monitoring during local LLM tests
+
+QnapAssistant's **ローカルAI 入出力テスト** page now includes a RAM chart
+and low-watermark monitor for the NAS. It reads Linux `MemAvailable`
+(which includes potentially reclaimable filesystem cache, and is preferable
+to `MemFree` for deciding whether the NAS has room to load another model).
+
+- Press **計測開始 / 履歴をリセット** before **Load / Check** to capture
+  the initial model-load memory spike. Press **計測停止** when finished.
+- When pressing **回答を生成**, RAM monitoring starts **automatically**
+  if manual monitoring is not already active. It samples throughout model
+  preparation and inference and stops automatically afterward. If the user
+  started monitoring manually, it continues after the answer until stopped.
+- Displays **current available RAM, minimum RAM since monitoring began,
+  change from the first sample, installed RAM, sample count**, and a
+  time-ordered line chart (0–total RAM on the vertical axis).
+- `GET /api/system/memory` is a small read-only endpoint using existing
+  `/proc/meminfo` metrics. It responds with
+  `total_bytes`, `available_bytes`, and `sampled_at_unix_ms`.
+  No config, provider keys, model runtime or history storage is accessed.
+- Polls around **once per second**, with at most one request in flight.
+  Only the most recent **300 samples / five minutes** are retained in
+  browser memory for the graph; the low-watermark is maintained since
+  the start of monitoring. No time-series data is saved to the NAS drive
+  or sent to an external service. The trace is discarded on page reload.
+- Browser background throttling or slow network requests can introduce
+  gaps; short peaks between samples may be missed. The measurements cover
+  **system-wide** available RAM, not per-model RAM or precise inference
+  allocations. Available RAM may rise as filesystem cache is reclaimed.
+
+For Qwen3-8B Q4_K_M at 16K on a 16 GB RAM NAS, compare the minimum
+`MemAvailable` during a real full-week prompt, not just at idle, before
+considering larger context windows.
