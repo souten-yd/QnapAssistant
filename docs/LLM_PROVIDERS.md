@@ -502,3 +502,38 @@ health data; do not automatically create duplicates. A successful status
 poll means the *management API* is reachable, not proof of actual model
 progress. Browser/HTTP/network timeouts are separate from configured
 local model deadlines.
+
+
+### Privacy-preserving inference diagnostics (v0.5.10)
+
+The async jobs API now requests llama.cpp's OpenAI-compatible SSE stream internally,
+but still returns the original **non-streaming completion JSON** at
+`GET /api/llm/jobs/{id}/result`. This allows partial text to be inspected
+if the backend fails or a generation deadline expires.
+
+```
+GET /api/llm/jobs/{id}/diagnostics
+GET /api/llm/jobs/{id}/diagnostics?include_output=1
+```
+
+The first returns **no generated content**, only: state, error code, elapsed
+time, generation seconds, first-token milliseconds (-1 if none), seconds since
+last text delta, observed delta chunk count (not an exact token count),
+optional backend-reported prompt/completion tokens, output bytes, truncation,
+model/context, finish reason, and whether private raw text remains in RAM.
+The second returns the generated text (`raw_output`) only after an explicit
+read. A 192-bit random job ID is a bearer capability for this endpoint; never
+log, publish or embed it in telemetry. Keep port 11435 on a trusted LAN.
+
+Normal `generation_timeout` is now classified as
+`generation_first_token_timeout` or `generation_timeout_partial`, depending
+on whether any content delta was received. This distinguishes cold/slow
+prefill from slow generation (but neither alone proves an OOM event).
+Backend non-SSE JSON is still accepted for compatibility.
+
+Limits: 256 KiB output per job, at most five outstanding jobs, and 15-minute
+RAM-only retention after terminal state. **No prompt, raw output, or full
+request/response is persisted by this feature.** Copy the explicit diagnostics
+result when investigating a failure, before the 15-minute retention expires.
+NAS service restarts discard in-memory raw output. QnapSelfCare v0.3.54 can
+persist the redacted metadata separately and retrieve raw only upon request.
