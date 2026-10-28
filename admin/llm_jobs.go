@@ -55,6 +55,15 @@ func parseJobRequest(body []byte) ([]byte,error) {
  if err:=json.Unmarshal(payload["messages"],&messages);err!=nil||len(messages)==0||len(messages)>64{
   return nil,errors.New("messages must contain 1 to 64 messages")
  }
+ for _,raw:=range messages{
+  var entry struct{Role string `json:"role"`;Content json.RawMessage `json:"content"`}
+  if err:=json.Unmarshal(raw,&entry);err!=nil{return nil,errors.New("invalid message object")}
+  if entry.Role!="system"&&entry.Role!="user"&&entry.Role!="assistant"{return nil,errors.New("unsupported message role")}
+  var content string
+  if err:=json.Unmarshal(entry.Content,&content);err!=nil||strings.TrimSpace(content)==""{
+   return nil,errors.New("messages require nonempty text content")
+  }
+ }
  var stream bool
  if b,ok:=payload["stream"];ok {
   if err:=json.Unmarshal(b,&stream);err!=nil||stream{return nil,errors.New("asynchronous jobs require stream=false")}
@@ -164,7 +173,12 @@ func (m *manager) runJob(j *llmJob){
  }
  defer resp.Body.Close()
  data,err:=io.ReadAll(io.LimitReader(resp.Body,maxJobResultBytes+1))
- if err!=nil{m.markJob(j,"failed","response_read_error",err.Error(),nil);return}
+ if err!=nil{
+  if errors.Is(j.ctx.Err(),context.Canceled){m.markJob(j,"cancelled","cancelled","cancelled by client",nil)
+  }else if errors.Is(ctx.Err(),context.DeadlineExceeded){m.markJob(j,"timed_out","generation_timeout","generation timed out",nil)
+  }else{m.markJob(j,"failed","response_read_error",err.Error(),nil)}
+  return
+ }
  if len(data)>maxJobResultBytes{m.markJob(j,"failed","response_too_large","local LLM response exceeded limit",nil);return}
  if resp.StatusCode!=http.StatusOK{
   m.markJob(j,"failed",fmt.Sprintf("backend_http_%d",resp.StatusCode),
