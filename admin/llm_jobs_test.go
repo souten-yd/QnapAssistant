@@ -59,7 +59,7 @@ func TestLLMJobLifeCycleAndCancellation(t *testing.T){
    defer r.Body.Close()
    var payload map[string]any
    if err:=json.NewDecoder(r.Body).Decode(&payload);err!=nil{t.Error(err)}
-   if payload["stream"]!=false{t.Error("streaming not disabled")}
+   if payload["stream"]!=true{t.Error("internal streaming not enabled")}
    w.Header().Set("Content-Type","application/json")
    _,_=w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":2}}`))
    return
