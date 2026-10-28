@@ -45,7 +45,7 @@ type llmJob struct {
  promptTokens int
  completionTokens int
  finishReason string
- minMemoryAvailableBytes uint64
+ minMemoryAvailableBytes int64
 }
 
 func (j *llmJob) terminal() bool {
