@@ -4,11 +4,9 @@ import (
     "bytes"
     "encoding/json"
     "errors"
-    "fmt"
     "io"
     "net"
     "net/http"
-    "strconv"
     "strings"
     "time"
 )
@@ -134,6 +132,3 @@ func (m *manager) handleLocalLLMTest(w http.ResponseWriter, r *http.Request) {
     _, _ = io.Copy(w, io.LimitReader(response.Body, 1<<20))
 }
 
-func localTestDescription(c config) string {
-    return fmt.Sprintf("%s / ctx %s", c["MODEL_PATH"], strconv.Itoa(intVal(c, "CONTEXT", 4096)))
-}
