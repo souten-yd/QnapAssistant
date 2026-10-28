@@ -93,6 +93,8 @@ func (m *manager) handleLocalLLMTest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    release := m.beginLLMUse()
+    defer release()
     if err := m.ensureReady(r.Context()); err != nil {
         http.Error(w, "local LLM startup failed: "+err.Error(), http.StatusServiceUnavailable)
         return
@@ -104,9 +106,6 @@ func (m *manager) handleLocalLLMTest(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "local provider changed during model preparation", http.StatusConflict)
         return
     }
-    release := m.beginLLMUse()
-    defer release()
-
     client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{
         Proxy: nil,
         DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
