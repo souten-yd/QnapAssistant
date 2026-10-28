@@ -278,6 +278,7 @@ func (m *manager) createLLMJob(w http.ResponseWriter,r *http.Request){
  m.jobQueue<-j
  m.jobsMu.Unlock()
  w.Header().Set("Location","/api/llm/jobs/"+id)
+ w.Header().Set("Content-Type","application/json; charset=utf-8")
  w.WriteHeader(http.StatusAccepted)
  writeJSON(w,map[string]any{"request_id":id,"status":"queued","status_url":"/api/llm/jobs/"+id,
   "result_url":"/api/llm/jobs/"+id+"/result"})
