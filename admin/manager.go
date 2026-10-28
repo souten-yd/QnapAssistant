@@ -46,7 +46,7 @@ type manager struct {
 
 func (m *manager) backendRunningLocked() bool { return m.cmd != nil && m.cmd.Process != nil }
 
-func (m *manager) startBackend() error {
+func (m *manager) startBackend(ctx context.Context) error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 
@@ -66,11 +66,12 @@ func (m *manager) startBackend() error {
 	model := cfg["MODEL_PATH"]
 	if st, err := os.Stat(model); err != nil || st.Size() < int64(intVal(cfg, "MIN_MODEL_BYTES", 1)) {
 		dl := filepath.Join(m.qpkgDir, "download-model.sh")
-		if err := exec.Command(dl, m.configPath).Run(); err != nil {
+		if err := exec.CommandContext(ctx, dl, m.configPath).Run(); err != nil {
 			return fmt.Errorf("model unavailable and download failed: %w", err)
 		}
 	}
 
+	if err := ctx.Err(); err != nil { return err }
 	server := filepath.Join(m.qpkgDir, "bin", "llama-server")
 	args := []string{"--model", model, "--host", "127.0.0.1", "--port", cfg["BACKEND_PORT"], "--threads", cfg["THREADS"], "--threads-batch", cfg["THREADS_BATCH"], "--ctx-size", cfg["CONTEXT"], "--batch-size", cfg["BATCH"], "--ubatch-size", cfg["UBATCH"], "--parallel", cfg["PARALLEL"]}
 	extra, err := splitArgs(cfg["EXTRA_ARGS"])
@@ -147,11 +148,11 @@ func (m *manager) ensureReady(ctx context.Context) error {
 	if normalizedLLMProvider(cfg) == "openrouter" {
 		return m.openRouterReady()
 	}
-	if err := m.startBackend(); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(llmLoadTimeout(cfg))*time.Second)
 	defer cancel()
+	if err := m.startBackend(ctx); err != nil {
+		return err
+	}
 	healthURL := "http://127.0.0.1:" + cfg["BACKEND_PORT"] + "/health"
 	client := &http.Client{Timeout: 2 * time.Second}
 	ticker := time.NewTicker(500 * time.Millisecond)
