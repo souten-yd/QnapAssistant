@@ -290,7 +290,34 @@ header waits to 30 seconds, and aborts after 60 seconds without body data. Faile
 partial files are removed and existing installed files are preserved. Click
 **Download to Public** again to retry from the beginning; resume is not implemented.
 
-### SelfCare weekly health analysis: Qwen3-8B Q5_K_M
+### SelfCare weekly health analysis: Qwen3-8B Q4_K_M (10 GB RAM) / Q5_K_M
+
+For the requested **10 GB installed RAM** configuration, prioritize the official
+**Qwen3-8B Q4_K_M GGUF** (about 5.03 decimal GB, Apache-2.0).
+Pinned revision: `7c41481f57cb95916b40956ab2f0b139b296d974`.
+Published SHA-256: `d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785`.
+Official file: <https://huggingface.co/Qwen/Qwen3-8B-GGUF/blob/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf>.
+
+Target a **16,384-token context** for one-week summarized SelfCare analysis:
+1. Download Q4 from the preset and wait for successful hash verification.
+2. Select `Qwen3-8B-Q4_K_M.gguf` using **Select local model**.
+3. Under **Local llama.cpp settings**, set `CONTEXT=16384` and click **Save local LLM settings**.
+4. Set Qwen3 Thinking **off** initially to conserve generation time (this is independent of context length), then use **Load / Check**. Confirm readiness and available memory on the NAS.
+5. In SelfCare choose QnapAssistant with model `auto`, and run a short AI connectivity test before a weekly consultation.
+
+These are **manual, opt-in actions**: preset selection must not auto-download,
+auto-select, start inference, change context, or switch the active model. The
+normal installed defaults (`CONTEXT=4096`, Qwen3-0.6B) remain unchanged.
+
+**Important memory limit:** Q4 weights use about **5.03 decimal GB** on disk,
+and FP16 KV cache at 16K about **2.25 GiB**, plus compute buffers, QTS,
+SelfCare, other QPKGs and filesystem cache. Installed 10 GB RAM does not mean
+10 GB of free RAM. Depending on actual `MemAvailable`, context and process
+overheads, this configuration **may OOM** or swap heavily. Prefer stopping
+unneeded processes and inspecting RAM; do not rely on disk swap as normal operation,
+especially on HDD-based RAID. If 16K fails, a smaller model (4B) at 16K is the
+safer alternative to preserve a week's summary. SelfCare currently has a 300 s
+consultation timeout and a slow CPU may exceed it.
 
 The download selector also offers the official **Qwen3-8B Q5_K_M GGUF** (5.85 GB,
 Apache-2.0), aimed at Japanese summaries of measurements, food and activity.
