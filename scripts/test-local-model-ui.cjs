@@ -7,7 +7,11 @@ const script = source.match(/<script>([\s\S]*?)<\/script>/)[1];
 new vm.Script(script);
 const presets = [...source.matchAll(/<option value="[^"]+" (data-url=[^>]+)>/g)]
   .map(m => Object.fromEntries([...m[1].matchAll(/data-(\w+)="([^"]+)"/g)].map(x => [x[1], x[2]])));
-assert.equal(presets.length, 4);
+assert.equal(presets.length, 5);
+const q4Preset = presets.find(p => p.filename === 'Qwen3-8B-Q4_K_M.gguf');
+assert.ok(q4Preset, 'SelfCare 10GB RAM Q4 preset present');
+assert.equal(q4Preset.sha256, 'd98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785');
+assert.match(q4Preset.url, /Qwen\/Qwen3-8B-GGUF\/resolve\/7c41481f57cb95916b40956ab2f0b139b296d974\/Qwen3-8B-Q4_K_M\.gguf/);
 const healthPreset = presets.find(p => p.filename === 'Qwen3-8B-Q5_K_M.gguf');
 assert.ok(healthPreset, 'health-advice preset present');
 assert.equal(healthPreset.sha256, '068bae163faa96ad48032daf4e071a6a28fe67d8dcc95367609c2ff165e52738');
