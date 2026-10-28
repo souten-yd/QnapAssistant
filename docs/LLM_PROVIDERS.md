@@ -290,9 +290,9 @@ header waits to 30 seconds, and aborts after 60 seconds without body data. Faile
 partial files are removed and existing installed files are preserved. Click
 **Download to Public** again to retry from the beginning; resume is not implemented.
 
-### SelfCare weekly health analysis: Qwen3-8B Q4_K_M (10 GB RAM) / Q5_K_M
+### SelfCare weekly health analysis: Qwen3-8B Q4_K_M (16 GB RAM) / Q5_K_M
 
-For the requested **10 GB installed RAM** configuration, prioritize the official
+For the requested **16 GB installed RAM** configuration, prioritize the official
 **Qwen3-8B Q4_K_M GGUF** (about 5.03 decimal GB, Apache-2.0).
 Pinned revision: `7c41481f57cb95916b40956ab2f0b139b296d974`.
 Published SHA-256: `d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785`.
@@ -311,13 +311,16 @@ normal installed defaults (`CONTEXT=4096`, Qwen3-0.6B) remain unchanged.
 
 **Important memory limit:** Q4 weights use about **5.03 decimal GB** on disk,
 and FP16 KV cache at 16K about **2.25 GiB**, plus compute buffers, QTS,
-SelfCare, other QPKGs and filesystem cache. Installed 10 GB RAM does not mean
-10 GB of free RAM. Depending on actual `MemAvailable`, context and process
-overheads, this configuration **may OOM** or swap heavily. Prefer stopping
-unneeded processes and inspecting RAM; do not rely on disk swap as normal operation,
-especially on HDD-based RAID. If 16K fails, a smaller model (4B) at 16K is the
-safer alternative to preserve a week's summary. SelfCare currently has a 300 s
-consultation timeout and a slow CPU may exceed it.
+SelfCare, other QPKGs and filesystem cache. At 16 GB installed RAM, the
+Q4/16K configuration is substantially more practical than on a 10 GB NAS,
+but installed capacity is not equal to `MemAvailable` and successful startup
+is not guaranteed. Approximate combined weight-file size and FP16 KV allocation
+are 5.03 decimal GB + 2.25 GiB (about 6.9 GiB combined, or 7.45 decimal GB), **before** runtime
+buffers and QTS/application overhead. Inspect available RAM and startup logs;
+avoid depending on HDD swap for normal operation. If 16K cannot be sustained,
+reduce competing memory use or try a 4B model at 16K to retain the weekly
+summary. SelfCare currently has a 300 s consultation timeout and a slow CPU
+may exceed it.
 
 The download selector also offers the official **Qwen3-8B Q5_K_M GGUF** (5.85 GB,
 Apache-2.0), aimed at Japanese summaries of measurements, food and activity.
@@ -353,8 +356,9 @@ records before sleep and other inputs; this is *not* an appropriate input for
 Qwen3-8B base configuration has 36 layers, 8 KV heads and 128 head dimensions.
 At FP16 KV precision and 16,384 context positions, the KV cache alone is
 `16384 * 36 * 8 * 128 * 2 (K/V) * 2 bytes = 2,415,919,104 bytes = 2.25 GiB`,
-in addition to model weights (~5.85 **decimal GB** on disk), llama runtime,
-OS and other running services. 32,768 context requires ~4.50 GiB FP16 KV cache.
+in addition to model weights (~5.03 **decimal GB** for Q4_K_M, or
+~5.85 **decimal GB** for Q5_K_M on disk), llama runtime, OS and other
+running services. 32,768 context requires ~4.50 GiB FP16 KV cache.
 Actual memory may vary with llama.cpp cache quantization, allocation and usage.
 A NAS with 8 GB total RAM may be unable to run this model at 16K; consider the
 existing Qwen3-4B or 1.7B choices, smaller context or more RAM. Model download
@@ -370,3 +374,34 @@ the local provider. Model choice does not automatically change that payload.
 For a QnapAssistant local model with QnapSelfCare, select the local provider and
 choose `model=auto` in SelfCare. Health advice is not a diagnosis or a reason
 to change medication; review changes with an appropriate clinician.
+
+### Local model input / output playground
+
+The QnapAssistant management page provides a **ローカルAI 入出力テスト**
+card for manually testing the currently selected **local** GGUF model (for
+example Qwen3-8B Q4_K_M with `CONTEXT=16384`).
+
+- Enter optional system instructions and paste an arbitrary Japanese question,
+  a bounded seven-day SelfCare summary, or an already prepared JSON snippet.
+- **回答を生成** sends a single non-streaming request to
+  `POST /api/llm/local-test`; the response area shows the raw text plus
+  elapsed time, input/output token counts when supplied by llama.cpp, and
+  the finish reason. Long-running requests can be **中止**-ed from the browser.
+- **架空の7日データを入力** inserts only synthetic sample measurements. It
+  does not query SelfCare or the Apple Health sample database.
+- Only the selected **local** backend (`127.0.0.1:BACKEND_PORT`) is used.
+  The server rejects the endpoint when `LLM_PROVIDER=openrouter`, refuses
+  provider-aware fallback/remote forwarding and does not follow redirects.
+  This prevents accidental transmission to an external LLM provider even
+  when the provider selection changes after opening the page.
+- Requests are sent explicitly by the user. The UI has no auto-submission,
+  conversation storage or browser persistence. The endpoint does not log or
+  save prompt/response bodies. As elsewhere in QnapAssistant, users should
+  restrict network access to the NAS management port.
+- `max_tokens` is selectable (256, 512, 1024, 2048) and is validated on
+  the server. Submitted request size is limited to 256 KiB and a single JSON
+  object; oversized data must be summarized rather than silently truncated.
+  The global model or context settings are **not modified** by this test.
+
+This is a manual interactive diagnostic. It does not implement SelfCare-side
+automatic weekly data collection, injection or clinical review.
