@@ -374,3 +374,34 @@ the local provider. Model choice does not automatically change that payload.
 For a QnapAssistant local model with QnapSelfCare, select the local provider and
 choose `model=auto` in SelfCare. Health advice is not a diagnosis or a reason
 to change medication; review changes with an appropriate clinician.
+
+### Local model input / output playground
+
+The QnapAssistant management page provides a **ローカルAI 入出力テスト**
+card for manually testing the currently selected **local** GGUF model (for
+example Qwen3-8B Q4_K_M with `CONTEXT=16384`).
+
+- Enter optional system instructions and paste an arbitrary Japanese question,
+  a bounded seven-day SelfCare summary, or an already prepared JSON snippet.
+- **回答を生成** sends a single non-streaming request to
+  `POST /api/llm/local-test`; the response area shows the raw text plus
+  elapsed time, input/output token counts when supplied by llama.cpp, and
+  the finish reason. Long-running requests can be **中止**-ed from the browser.
+- **架空の7日データを入力** inserts only synthetic sample measurements. It
+  does not query SelfCare or the Apple Health sample database.
+- Only the selected **local** backend (`127.0.0.1:BACKEND_PORT`) is used.
+  The server rejects the endpoint when `LLM_PROVIDER=openrouter`, refuses
+  provider-aware fallback/remote forwarding and does not follow redirects.
+  This prevents accidental transmission to an external LLM provider even
+  when the provider selection changes after opening the page.
+- Requests are sent explicitly by the user. The UI has no auto-submission,
+  conversation storage or browser persistence. The endpoint does not log or
+  save prompt/response bodies. As elsewhere in QnapAssistant, users should
+  restrict network access to the NAS management port.
+- `max_tokens` is selectable (256, 512, 1024, 2048) and is validated on
+  the server. Submitted request size is limited to 256 KiB and a single JSON
+  object; oversized data must be summarized rather than silently truncated.
+  The global model or context settings are **not modified** by this test.
+
+This is a manual interactive diagnostic. It does not implement SelfCare-side
+automatic weekly data collection, injection or clinical review.
