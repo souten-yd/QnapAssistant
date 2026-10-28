@@ -289,3 +289,57 @@ The downloader follows redirects with TLS verification enabled, limits response
 header waits to 30 seconds, and aborts after 60 seconds without body data. Failed
 partial files are removed and existing installed files are preserved. Click
 **Download to Public** again to retry from the beginning; resume is not implemented.
+
+### SelfCare weekly health analysis: Qwen3-8B Q5_K_M
+
+The download selector also offers the official **Qwen3-8B Q5_K_M GGUF** (5.85 GB,
+Apache-2.0), aimed at Japanese summaries of measurements, food and activity.
+Official GGUF: <https://huggingface.co/Qwen/Qwen3-8B-GGUF/blob/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q5_K_M.gguf>.
+Pinned revision: `7c41481f57cb95916b40956ab2f0b139b296d974`.
+Verified file SHA-256: `068bae163faa96ad48032daf4e071a6a28fe67d8dcc95367609c2ff165e52738`.
+This is a download **option**, not a new default or medical-quality certification.
+
+A **one-week, summarized** SelfCare payload can be budgeted approximately as:
+
+| One-week information | Estimated input tokens |
+| --- | ---: |
+| Body composition | 500–900 |
+| Blood pressure / pulse | 500–1,000 |
+| Steps, exercise and energy | 700–1,200 |
+| Sleep duration and sleep-stage intervals | 1,000–2,500 |
+| Heart rate / SpO2 daily statistics and flagged changes | 700–1,500 |
+| Meal logs and calories | 1,500–3,000 |
+| Goals, historic comparison and instructions | 1,000–2,000 |
+| **Total** | **5,900–12,100** |
+
+These are **planning estimates**, not measured token counts. Actual input can
+exceed them with verbose Japanese meal notes, raw measurements, or repeated
+JSON keys. Reserve around **2,048 output tokens**, plus chat-template and
+system-prompt overhead; cap/count tokens before sending. For a summarized week,
+**CONTEXT=16384** is a reasonable *starting* local llama.cpp setting, whereas
+the existing global default **CONTEXT=4096** remains untouched. If the measured
+prompt would not fit, aggregate further or explicitly use a larger context only
+when hardware permits. Raw five-minute heart-rate samples can add 2,016 weekly
+records before sleep and other inputs; this is *not* an appropriate input for
+16K without downsampling. Do not silently truncate values important to safety.
+
+Qwen3-8B base configuration has 36 layers, 8 KV heads and 128 head dimensions.
+At FP16 KV precision and 16,384 context positions, the KV cache alone is
+`16384 * 36 * 8 * 128 * 2 (K/V) * 2 bytes = 2,415,919,104 bytes = 2.25 GiB`,
+in addition to model weights (~5.85 **decimal GB** on disk), llama runtime,
+OS and other running services. 32,768 context requires ~4.50 GiB FP16 KV cache.
+Actual memory may vary with llama.cpp cache quantization, allocation and usage.
+A NAS with 8 GB total RAM may be unable to run this model at 16K; consider the
+existing Qwen3-4B or 1.7B choices, smaller context or more RAM. Model download
+size below 10 GB does **not** establish memory compatibility or acceptable speed.
+
+**Current integration scope:** QnapSelfCare's `wellness_ai.py` passes recent
+activity entries (up to seven), the latest measurements, up to five meal notes,
+summary and planning data to QnapAssistant. It does **not** yet send a full week
+of Apple Health heart-rate/SpO2/sleep samples to the AI. A future SelfCare-side
+feature must explicitly build a bounded, user-consented weekly summary, preserve
+source timestamps and missing-data flags, and keep health data local when using
+the local provider. Model choice does not automatically change that payload.
+For a QnapAssistant local model with QnapSelfCare, select the local provider and
+choose `model=auto` in SelfCare. Health advice is not a diagnosis or a reason
+to change medication; review changes with an appropriate clinician.
