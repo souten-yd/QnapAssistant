@@ -12,7 +12,14 @@ LLM_IDLE_TIMEOUT_SECONDS=300
 ```
 
 `0` keeps the local llama.cpp/Qwen model resident. `1` unloads llama.cpp after
-the configured number of idle seconds. Active requests, including a streaming
+the configured number of idle seconds.
+
+New asynchronous requests hold a lease from **before startup through completion**,
+so a slow model load is never mistaken for idle. The 15-second idle scanner
+synchronizes stop decisions against new request leases. Configurable load and
+generation timeouts are `LLM_LOAD_TIMEOUT_SECONDS=600` and
+`LLM_GENERATE_TIMEOUT_SECONDS=1800` by default; these affect asynchronous
+jobs and the model readiness wait, not unrelated network clients. Active requests, including a streaming
 voice completion, hold an activity lease so the idle loop cannot unload the
 model while generation is in progress.
 
