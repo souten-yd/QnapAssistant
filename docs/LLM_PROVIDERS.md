@@ -458,6 +458,12 @@ curl http://NAS:11435/api/llm/jobs/req_.../result
 curl -X DELETE http://NAS:11435/api/llm/jobs/req_...
 ```
 
+The global, read-only **`GET /api/llm/state`** also reports model lifecycle
+`unloaded`, `queued`, `loading_model`, `ready`, `generating`,
+`unavailable` or `remote`, based on both active jobs and llama.cpp `/health`.
+It exposes no request IDs or private prompts and distinguishes process-alive
+from backend-ready.
+
 Job states: `queued`, `loading_model`, `ready`, `generating`,
 `completed`, `failed`, `timed_out`, `cancelled`. State returns
 elapsed/stage seconds, configured model and context, process-alive flag,
