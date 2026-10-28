@@ -41,14 +41,12 @@ const ctx={
   fetch:(url,options)=>{sent.push({url,options});return responder(url,options);}
 };
 vm.createContext(ctx);
-const fnNames=[
-  'aiMemGiB','aiMemRender','aiMemRecord','pollAiMemWatch','startAiMemWatch','stopAiMemWatch',
-  'fillAiTestExample','cancelAiTest','runAiTest'
-];
-const selected=script.split('\n').filter(line=>
-  line.startsWith('let aiTestBusy=')||line.startsWith('let aiMemTimer=')||
-  fnNames.some(name=>line.startsWith('function '+name+'(')||line.startsWith('async function '+name+'('))
-).join('\n');
+// The memory monitor helpers now span multiple source lines. Evaluate the
+// complete isolated feature section rather than line-filtering function headers.
+const start=script.indexOf('let aiMemTimer=');
+const end=script.indexOf('async function saveVoiceProfiles()',start);
+assert.ok(start>=0 && end>start, 'playground code section was not found');
+const selected=script.slice(start,end);
 vm.runInContext(selected,ctx);
 (async()=>{
   // No memory polling or inference for empty prompt.
