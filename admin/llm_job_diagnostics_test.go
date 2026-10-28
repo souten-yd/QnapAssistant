@@ -1,7 +1,6 @@
 package main
 
 import (
- "context"
  "errors"
  "io"
  "net/http"
