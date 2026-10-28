@@ -11,6 +11,7 @@ import (
 func configKeyAllowedV04(k string) bool {
 	allowed := map[string]bool{
 		"LLM_PROVIDER": true, "LLM_AUTO_UNLOAD": true, "LLM_IDLE_TIMEOUT_SECONDS": true,
+		"LLM_LOAD_TIMEOUT_SECONDS": true, "LLM_GENERATE_TIMEOUT_SECONDS": true,
 		"MODEL_PATH": true, "MODEL_DIR": true, "MODEL_URL": true, "MODEL_SHA256": true, "MIN_MODEL_BYTES": true,
 		"ADMIN_PORT": true, "BACKEND_PORT": true, "THREADS": true, "THREADS_BATCH": true, "CONTEXT": true, "BATCH": true, "UBATCH": true, "PARALLEL": true,
 		"IDLE_TIMEOUT_SECONDS": true, "EXTRA_ARGS": true,
@@ -73,6 +74,10 @@ func validateProviderConfig(c config) string {
 	attempts, err := strconv.Atoi(strings.TrimSpace(c["OPENROUTER_AUTO_FREE_FALLBACK_ATTEMPTS"]))
 	if err != nil || attempts < 1 || attempts > openRouterAutoFallbackMaxAttempts {
 		return "OPENROUTER_AUTO_FREE_FALLBACK_ATTEMPTS must be between 1 and 5"
+	}
+	for _,key:=range []string{"LLM_LOAD_TIMEOUT_SECONDS","LLM_GENERATE_TIMEOUT_SECONDS"}{
+		n,err:=strconv.Atoi(strings.TrimSpace(c[key]))
+		if err!=nil||n<30||n>3600{return key+" must be between 30 and 3600 seconds"}
 	}
 	return ""
 }
