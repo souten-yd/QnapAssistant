@@ -439,3 +439,60 @@ to `MemFree` for deciding whether the NAS has room to load another model).
 For Qwen3-8B Q4_K_M at 16K on a 16 GB RAM NAS, compare the minimum
 `MemAvailable` during a real full-week prompt, not just at idle, before
 considering larger context windows.
+### Asynchronous local LLM jobs (v0.5.9)
+
+Existing OpenAI-compatible `POST /v1/chat/completions` is unchanged.
+Callers that need to distinguish model loading, inference and failure can
+instead submit the same **non-streaming, text-only** payload to
+`POST /api/llm/jobs`. This endpoint is **local-provider only**; it never
+forwards data to OpenRouter. Its 202 response contains a cryptographically
+random 192-bit `request_id`, `status_url` and `result_url`.
+
+```sh
+curl -X POST http://NAS:11435/api/llm/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"こんにちは"}],"max_tokens":256,"stream":false}'
+# 202 {"request_id":"req_...","status":"queued",...}
+curl http://NAS:11435/api/llm/jobs/req_...
+curl http://NAS:11435/api/llm/jobs/req_.../result
+curl -X DELETE http://NAS:11435/api/llm/jobs/req_...
+```
+
+Job states: `queued`, `loading_model`, `ready`, `generating`,
+`completed`, `failed`, `timed_out`, `cancelled`. State returns
+elapsed/stage seconds, configured model and context, process-alive flag,
+system MemAvailable, sample timestamp and a stable failure code. The
+process-alive flag does *not* mean model ready. Do not infer fabricated
+percentages or remaining seconds.
+
+Queue is restricted to **one active** and four awaiting jobs; excess
+submissions return HTTP 429. Load timeout and generation timeout are
+independent settings (defaults 600 and 1800 seconds; supported 30–3600).
+Set them using **Model residency / auto-unload** in the Web UI, or:
+
+```ini
+LLM_LOAD_TIMEOUT_SECONDS=600
+LLM_GENERATE_TIMEOUT_SECONDS=1800
+LLM_AUTO_UNLOAD=1
+LLM_IDLE_TIMEOUT_SECONDS=300
+```
+
+A request lease is acquired **before** model loading, retained until
+generation completes, and the idle stop path synchronizes with lease
+acquisition. The background worker is in memory, stores only bounded
+requests and responses, and expires completed jobs after 15 minutes.
+No prompt/answer/job history is written to NAS disk by this feature.
+Requests must use local text messages, `stream=false`, and no tools;
+max request is 256 KiB, max completion is 256 KiB, and `max_tokens`
+is restricted to 1–2048. Browser cross-origin calls are rejected; protect
+the NAS management port from untrusted clients. The opaque job ID is a
+bearer capability for status/result/cancellation: never publish it or
+include it in analytics/logs.
+
+If QnapAssistant itself restarts, unfinished in-memory jobs are lost and
+the client sees 404 on its old ID. Clients should distinguish this from
+`loading_model`, and request user confirmation before re-submitting
+health data; do not automatically create duplicates. A successful status
+poll means the *management API* is reachable, not proof of actual model
+progress. Browser/HTTP/network timeouts are separate from configured
+local model deadlines.
