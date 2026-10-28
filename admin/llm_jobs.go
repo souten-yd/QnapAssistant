@@ -35,6 +35,16 @@ type llmJob struct {
  ctx context.Context
  model string
  contextSize int
+ inputBytes int
+ generationStarted time.Time
+ firstTokenAt time.Time
+ lastTokenAt time.Time
+ partialOutput string
+ partialTruncated bool
+ tokenChunks int
+ promptTokens int
+ completionTokens int
+ finishReason string
 }
 
 func (j *llmJob) terminal() bool {
@@ -156,6 +166,17 @@ func (m *manager) runJob(j *llmJob){
  if err=applyThinkingMode(req,cfg);err!=nil{
   m.markJob(j,"failed","thinking_config",err.Error(),nil);return
  }
+ // Request internal SSE so partial text remains available after a timeout.
+ rewritten,err:=io.ReadAll(io.LimitReader(req.Body,maxJobRequestBytes+1))
+ if err!=nil||len(rewritten)>maxJobRequestBytes{m.markJob(j,"failed","invalid_request","streaming request too large",nil);return}
+ var streamPayload map[string]json.RawMessage
+ if err=json.Unmarshal(rewritten,&streamPayload);err!=nil{m.markJob(j,"failed","invalid_request","stream request malformed",nil);return}
+ streamPayload["stream"]=json.RawMessage("true")
+ rewritten,err=json.Marshal(streamPayload)
+ if err!=nil{m.markJob(j,"failed","invalid_request","stream request failed",nil);return}
+ req.Body=io.NopCloser(bytes.NewReader(rewritten))
+ req.ContentLength=int64(len(rewritten))
+ m.jobsMu.Lock();j.generationStarted=time.Now();m.jobsMu.Unlock()
  m.markJob(j,"generating","","",nil)
  generateTimeout:=time.Duration(llmGenerateTimeout(cfg))*time.Second
  ctx,cancel:=context.WithTimeout(j.ctx,generateTimeout)
@@ -167,19 +188,18 @@ func (m *manager) runJob(j *llmJob){
  resp,err:=client.Do(req)
  if err!=nil{
   if errors.Is(j.ctx.Err(),context.Canceled){m.markJob(j,"cancelled","cancelled","cancelled by client",nil)
-  }else if errors.Is(ctx.Err(),context.DeadlineExceeded){m.markJob(j,"timed_out","generation_timeout","generation timed out",nil)
+  }else if errors.Is(ctx.Err(),context.DeadlineExceeded){m.markGenerationTimeout(j)
   }else{m.markJob(j,"failed","backend_unreachable",err.Error(),nil)}
   return
  }
  defer resp.Body.Close()
- data,err:=io.ReadAll(io.LimitReader(resp.Body,maxJobResultBytes+1))
+ data,err:=m.readDiagnosticStream(j,resp)
  if err!=nil{
   if errors.Is(j.ctx.Err(),context.Canceled){m.markJob(j,"cancelled","cancelled","cancelled by client",nil)
-  }else if errors.Is(ctx.Err(),context.DeadlineExceeded){m.markJob(j,"timed_out","generation_timeout","generation timed out",nil)
+  }else if errors.Is(ctx.Err(),context.DeadlineExceeded){m.markGenerationTimeout(j)
   }else{m.markJob(j,"failed","response_read_error",err.Error(),nil)}
   return
  }
- if len(data)>maxJobResultBytes{m.markJob(j,"failed","response_too_large","local LLM response exceeded limit",nil);return}
  if resp.StatusCode!=http.StatusOK{
   m.markJob(j,"failed",fmt.Sprintf("backend_http_%d",resp.StatusCode),
     fmt.Sprintf("local model HTTP %d",resp.StatusCode),nil);return
@@ -208,9 +228,12 @@ func (m *manager) handleLLMJobs(w http.ResponseWriter,r *http.Request){
  }
  if !strings.HasPrefix(r.URL.Path,"/api/llm/jobs/"){http.NotFound(w,r);return}
  sub:=strings.TrimPrefix(r.URL.Path,"/api/llm/jobs/")
+ diagnostic:=strings.HasSuffix(sub,"/diagnostics")
+ if diagnostic{sub=strings.TrimSuffix(sub,"/diagnostics")}
  result:=strings.HasSuffix(sub,"/result")
  if result{sub=strings.TrimSuffix(sub,"/result")}
  if sub==""||strings.Contains(sub,"/"){http.NotFound(w,r);return}
+ if diagnostic{m.handleJobDiagnostics(w,r,sub);return}
  m.jobsMu.Lock()
  m.cleanFinishedJobsLocked()
  j:=m.jobs[sub]
@@ -267,7 +290,7 @@ func (m *manager) createLLMJob(w http.ResponseWriter,r *http.Request){
  ctx,cancel:=context.WithCancel(context.Background())
  now:=time.Now()
  j:=&llmJob{id:id,state:"queued",created:now,stageAt:now,request:payload,cancel:cancel,ctx:ctx,
-  model:cfg["MODEL_PATH"],contextSize:intVal(cfg,"CONTEXT",4096)}
+  model:cfg["MODEL_PATH"],contextSize:intVal(cfg,"CONTEXT",4096),inputBytes:len(payload)}
  m.jobsMu.Lock()
  m.cleanFinishedJobsLocked()
  active:=0
