@@ -7,7 +7,11 @@ const script = source.match(/<script>([\s\S]*?)<\/script>/)[1];
 new vm.Script(script);
 const presets = [...source.matchAll(/<option value="[^"]+" (data-url=[^>]+)>/g)]
   .map(m => Object.fromEntries([...m[1].matchAll(/data-(\w+)="([^"]+)"/g)].map(x => [x[1], x[2]])));
-assert.equal(presets.length, 3);
+assert.equal(presets.length, 4);
+const healthPreset = presets.find(p => p.filename === 'Qwen3-8B-Q5_K_M.gguf');
+assert.ok(healthPreset, 'health-advice preset present');
+assert.equal(healthPreset.sha256, '068bae163faa96ad48032daf4e071a6a28fe67d8dcc95367609c2ff165e52738');
+assert.match(healthPreset.url, /Qwen\/Qwen3-8B-GGUF\/resolve\/7c41481f57cb95916b40956ab2f0b139b296d974\//);
 function element() {
   return {value: '', textContent: '', children: [], dataset: {},
     replaceChildren() { this.children = []; this.value = ''; },
