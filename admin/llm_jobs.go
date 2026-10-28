@@ -45,6 +45,7 @@ type llmJob struct {
  promptTokens int
  completionTokens int
  finishReason string
+ minMemoryAvailableBytes uint64
 }
 
 func (j *llmJob) terminal() bool {
@@ -264,6 +265,9 @@ func (m *manager) handleLLMJobs(w http.ResponseWriter,r *http.Request){
  model,contextSize:=j.model,j.contextSize
  m.jobsMu.Unlock()
  total,avail,_:=systemStats()
+ m.jobsMu.Lock()
+ if avail>0&&(j.minMemoryAvailableBytes==0||avail<j.minMemoryAvailableBytes){j.minMemoryAvailableBytes=avail}
+ m.jobsMu.Unlock()
  m.mu.Lock();alive:=m.backendRunningLocked();m.mu.Unlock()
  writeJSON(w,map[string]any{
   "request_id":sub,"status":state,
