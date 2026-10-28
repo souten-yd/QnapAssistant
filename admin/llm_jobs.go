@@ -13,7 +13,6 @@ import (
  "net/http"
  "strconv"
  "strings"
- "sync"
  "time"
 )
 
@@ -268,4 +267,15 @@ func (m *manager) createLLMJob(w http.ResponseWriter,r *http.Request){
  w.WriteHeader(http.StatusAccepted)
  writeJSON(w,map[string]any{"request_id":id,"status":"queued","status_url":"/api/llm/jobs/"+id,
   "result_url":"/api/llm/jobs/"+id+"/result"})
+}
+
+func llmLoadTimeout(c config) int {
+ n:=intVal(c,"LLM_LOAD_TIMEOUT_SECONDS",600)
+ if n<30||n>3600{return 600}
+ return n
+}
+func llmGenerateTimeout(c config) int {
+ n:=intVal(c,"LLM_GENERATE_TIMEOUT_SECONDS",1800)
+ if n<30||n>3600{return 1800}
+ return n
 }
