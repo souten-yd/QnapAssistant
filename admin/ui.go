@@ -36,6 +36,18 @@ body{font-family:system-ui;margin:0;background:#101217;color:#eee}.wrap{max-widt
 <div class="card"><h3>ローカルAI 入出力テスト</h3>
 <div class="hint">現在選択中のローカルGGUFへ手動で質問を送信し、生成された回答を確認します。SelfCareの要約JSONも貼り付け可能です。<b>OpenRouterには送信しません。</b> 入力・回答をこの機能で保存することはありません。</div>
 <div id="aiTestTarget" class="hint" role="status">テスト対象: 使用中のローカルモデル（送信時に確認）</div>
+<div class="profile" id="aiMemMonitor" style="margin:12px 0" aria-label="NAS空きメモリ推移">
+<h4 style="margin:0 0 8px">RAM空き容量モニター（MemAvailable）</h4>
+<div class="hint">推論テスト中は自動計測。手動で開始すれば、モデルのロード前から追跡できます。1秒間隔・直近5分の履歴です。</div>
+<button id="aiMemStart" onclick="startAiMemWatch()">計測開始 / 履歴をリセット</button><button id="aiMemStop" onclick="stopAiMemWatch()" disabled>計測停止</button>
+<div id="aiMemState" class="hint" role="status" aria-live="polite">停止中。開始ボタンまたは回答生成で計測します。</div>
+<div class="grid" style="margin:8px 0"><div><b>現在の空き</b><div id="aiMemNow">—</div></div><div><b>計測中の最小空き</b><div id="aiMemLow">—</div></div><div><b>開始時との差</b><div id="aiMemDelta">—</div></div><div><b>総RAM / サンプル数</b><div id="aiMemTotal">—</div></div></div>
+<svg id="aiMemChart" viewBox="0 0 600 130" preserveAspectRatio="none" style="display:block;width:100%;height:130px;background:#111722;border:1px solid #303745;border-radius:8px" role="img" aria-label="RAM空き容量の時系列グラフ。縦軸0から総メモリ、横軸は計測時刻">
+<line x1="12" y1="12" x2="588" y2="12" stroke="#303745"/><line x1="12" y1="65" x2="588" y2="65" stroke="#303745"/><line x1="12" y1="118" x2="588" y2="118" stroke="#303745"/>
+<polyline id="aiMemLine" points="" fill="none" stroke="#61b3ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/><circle id="aiMemDot" cx="-10" cy="-10" r="4" fill="#61b3ff"/></svg>
+<div id="aiMemAxis" class="hint">横軸：経過時間（直近5分）／縦軸：0～総RAM（GiB）。グラフと最小値はブラウザ内だけに保持します。</div>
+<div class="hint">LinuxのMemAvailableはキャッシュ回収分を含む利用可能RAMの推定値です。モデル単体の使用量ではありません。ブラウザがバックグラウンドにあるとサンプリングが遅れる場合があります。NASディスクへ履歴は保存しません。</div>
+</div>
 <label for="aiTestSystem">システム指示（任意）</label><textarea id="aiTestSystem" rows="3" maxlength="4000">あなたは健康記録の整理を支援します。実測値と推定値を区別し、無理な減量や病気の診断、薬の変更は勧めず、日本語で簡潔に回答してください。</textarea>
 <label for="aiTestInput">入力（質問、測定記録、週次集約JSONなど）</label><textarea id="aiTestInput" rows="8" maxlength="60000" placeholder="例: この1週間の体重・血圧・睡眠・食事の記録から傾向と生活改善の候補を教えてください。"></textarea>
 <div class="grid"><div><label for="aiTestMaxTokens">最大出力トークン数</label><select id="aiTestMaxTokens"><option value="256">256</option><option value="512" selected>512</option><option value="1024">1024</option><option value="2048">2048</option></select></div></div>
@@ -71,10 +83,60 @@ async function saveORSettings(){await putCfg(values(orKeys))}
 async function testOR(){el('orTest').textContent='testing free route...';try{let d=await j('/api/openrouter/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_tokens:8})});el('orTest').textContent=JSON.stringify(d,null,2)}catch(e){el('orTest').textContent=e.message}}
 async function setThinking(){await j('/api/thinking',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:el('thinking').value})});refresh()}
 async function saveLocalCfg(){let c=values(localKeys);c.EXTRA_ARGS=el('EXTRA_ARGS').value;await putCfg(c)}
+let aiMemTimer=null,aiMemPending=false,aiMemSamples=[],aiMemFirst=null,aiMemLatest=null,aiMemMin=null,aiMemCount=0,aiMemSession=0,aiMemError='';
+function aiMemGiB(bytes){return (bytes/1073741824).toFixed(2)+' GiB';}
+function aiMemRender(){
+  if(!aiMemLatest)return;
+  let last=aiMemLatest,initial=aiMemFirst;
+  el('aiMemNow').textContent=aiMemGiB(last.available)+' ('+(100*last.available/last.total).toFixed(1)+'%)';
+  el('aiMemLow').textContent=aiMemGiB(aiMemMin);
+  let change=last.available-initial.available;
+  el('aiMemDelta').textContent=(change>0?'+':'')+(change/1073741824).toFixed(2)+' GiB';
+  el('aiMemTotal').textContent=aiMemGiB(last.total)+' / '+aiMemCount+' 点';
+  let oldest=aiMemSamples[0].at,range=Math.max(1000,last.at-oldest);
+  let xy=aiMemSamples.map(s=>{let x=12+576*(s.at-oldest)/range,y=118-106*Math.min(1,Math.max(0,s.available/s.total));return [x,y]});
+  el('aiMemLine').setAttribute('points',xy.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' '));
+  let p=xy[xy.length-1];el('aiMemDot').setAttribute('cx',p[0].toFixed(1));el('aiMemDot').setAttribute('cy',p[1].toFixed(1));
+  el('aiMemAxis').textContent='横軸：直近 '+Math.round((last.at-oldest)/1000)+'秒 / 縦軸：0 ～ '+aiMemGiB(last.total)+'（空きRAM）/ 最小値は計測開始以降';
+}
+function aiMemRecord(d,session){
+  if(session!==aiMemSession)return false;
+  let total=Number(d.total_bytes),available=Number(d.available_bytes),at=Number(d.sampled_at_unix_ms);
+  if(!Number.isFinite(total)||total<=0||!Number.isFinite(available)||available<0||available>total||!Number.isFinite(at)||at<=0){aiMemError='取得データが不正です';return false;}
+  let s={total,available,at};if(aiMemLatest&&s.at<=aiMemLatest.at)s.at=aiMemLatest.at+1;
+  if(!aiMemFirst)aiMemFirst=s;
+  aiMemLatest=s;aiMemMin=aiMemMin===null?available:Math.min(aiMemMin,available);
+  aiMemCount++;aiMemSamples.push(s);
+  while(aiMemSamples.length>300||aiMemSamples.length>1&&s.at-aiMemSamples[0].at>300000)aiMemSamples.shift();
+  aiMemError='';aiMemRender();return true;
+}
+async function pollAiMemWatch(){
+  if(aiMemPending)return;
+  let session=aiMemSession;aiMemPending=true;
+  try{let d=await j('/api/system/memory');if(aiMemRecord(d,session)&&session===aiMemSession){el('aiMemState').textContent=(aiMemTimer?'計測中（1秒間隔）':'計測終了')+' · '+new Date(aiMemLatest.at).toLocaleTimeString('ja-JP');}}
+  catch(e){if(session===aiMemSession){aiMemError=e.message;el('aiMemState').textContent='空きRAM取得失敗: '+aiMemError;}}
+  finally{aiMemPending=false;}
+}
+function startAiMemWatch(){
+  if(aiMemTimer!==null)clearInterval(aiMemTimer);
+  aiMemSession++;aiMemSamples=[];aiMemFirst=null;aiMemLatest=null;aiMemMin=null;aiMemCount=0;aiMemError='';
+  el('aiMemNow').textContent='計測開始中…';el('aiMemLow').textContent='—';el('aiMemDelta').textContent='—';el('aiMemTotal').textContent='—';
+  el('aiMemLine').setAttribute('points','');el('aiMemDot').setAttribute('cx','-10');el('aiMemDot').setAttribute('cy','-10');
+  el('aiMemAxis').textContent='横軸：直近5分 / 縦軸：0 ～ 総RAM';
+  el('aiMemState').textContent='空きRAMを計測しています…';
+  el('aiMemStart').disabled=true;el('aiMemStop').disabled=false;
+  aiMemTimer=setInterval(pollAiMemWatch,1000);pollAiMemWatch();
+}
+function stopAiMemWatch(){
+  if(aiMemTimer===null)return;
+  clearInterval(aiMemTimer);aiMemTimer=null;
+  el('aiMemStart').disabled=false;el('aiMemStop').disabled=true;
+  el('aiMemState').textContent='計測終了 · '+aiMemCount+'サンプル（この画面内に履歴を保持）'+(aiMemError?' / 最後の取得失敗: '+aiMemError:'');
+}
 let aiTestBusy=false,aiTestAbort=null;
 function fillAiTestExample(){let days=[['Day1',74.8,127,82,6800,6.8,1800],['Day2',74.6,125,80,7200,7.0,1750],['Day3',74.5,128,83,6000,6.4,1900],['Day4',74.7,126,81,7500,7.3,1850],['Day5',74.5,124,79,8000,7.2,1780],['Day6',74.4,129,84,5000,6.7,1950],['Day7',74.3,125,80,8500,7.5,1800]];el('aiTestInput').value='以下は実在の人の記録ではない架空のテストデータです。7日間の傾向と生活改善の候補を教えてください。\n'+JSON.stringify({sample:'synthetic_only',days:days.map(d=>({day:d[0],weight_kg:d[1],systolic_mmHg:d[2],diastolic_mmHg:d[3],steps:d[4],sleep_hours:d[5],energy_intake_kcal:d[6]}))},null,2);el('aiTestState').textContent='架空の7日データを入力しました。実際の記録ではありません。';}
 function cancelAiTest(){if(aiTestAbort)aiTestAbort.abort();}
-async function runAiTest(){if(aiTestBusy)return;let prompt=el('aiTestInput').value.trim();if(!prompt){el('aiTestState').textContent='入力欄に質問やデータを入力してください。';return;}let maxTokens=Number(el('aiTestMaxTokens').value);if(![256,512,1024,2048].includes(maxTokens)){el('aiTestState').textContent='最大出力トークン数の設定が不正です。';return;}aiTestBusy=true;aiTestAbort=new AbortController();el('aiTestRun').disabled=true;el('aiTestCancel').disabled=false;el('aiTestOutput').textContent='';el('aiTestMeta').textContent='';el('aiTestState').textContent='モデルと接続先を確認しています…';let started=Date.now();try{let s=await j('/api/status');if(s.llm_provider!=='local'){el('aiTestTarget').textContent='OpenRouter選択中（送信しません）';throw new Error('ローカルLLMを選択してください。テスト用の健康データはOpenRouterへ送信しません。');}let cfg=await j('/api/config');el('aiTestTarget').textContent='Local / '+(s.model_path||'-')+' / CONTEXT '+(cfg.CONTEXT||'?')+' / 空きRAM '+Math.round((s.memory_available_bytes||0)/1048576)+' MiB';if(aiTestAbort.signal.aborted)throw Object.assign(new Error('cancelled'),{name:'AbortError'});el('aiTestState').textContent='ローカルAIで回答を生成しています…';let response=await fetch('/api/llm/local-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,system_prompt:el('aiTestSystem').value,max_tokens:maxTokens}),signal:aiTestAbort.signal});let raw=await response.text();if(!response.ok)throw new Error('HTTP '+response.status+': '+raw.slice(0,500));let data=JSON.parse(raw),choice=(data.choices||[])[0]||{},msg=choice.message||{};let content=typeof msg.content==='string'?msg.content:(Array.isArray(msg.content)?msg.content.filter(p=>p&&typeof p.text==='string').map(p=>p.text).join('\n'):'');if(!content.trim())throw new Error('AIから回答テキストが返りませんでした。');el('aiTestOutput').textContent=content;let use=data.usage||{},sec=((Date.now()-started)/1000).toFixed(1);el('aiTestMeta').textContent='処理時間 '+sec+'秒 / 入力 '+(use.prompt_tokens??'不明')+' tokens / 出力 '+(use.completion_tokens??'不明')+' tokens / 終了理由 '+(choice.finish_reason||'不明');el('aiTestState').textContent='完了しました。';}catch(e){el('aiTestState').textContent=e.name==='AbortError'?'テストを中止しました。':'テスト失敗: '+e.message;}finally{aiTestBusy=false;aiTestAbort=null;el('aiTestRun').disabled=false;el('aiTestCancel').disabled=true;}}
+async function runAiTest(){if(aiTestBusy)return;let prompt=el('aiTestInput').value.trim();if(!prompt){el('aiTestState').textContent='入力欄に質問やデータを入力してください。';return;}let maxTokens=Number(el('aiTestMaxTokens').value);if(![256,512,1024,2048].includes(maxTokens)){el('aiTestState').textContent='最大出力トークン数の設定が不正です。';return;}let aiTestStartedMemWatch=aiMemTimer===null;if(aiTestStartedMemWatch)startAiMemWatch();aiTestBusy=true;aiTestAbort=new AbortController();el('aiTestRun').disabled=true;el('aiTestCancel').disabled=false;el('aiTestOutput').textContent='';el('aiTestMeta').textContent='';el('aiTestState').textContent='モデルと接続先を確認しています…';let started=Date.now();try{let s=await j('/api/status');if(s.llm_provider!=='local'){el('aiTestTarget').textContent='OpenRouter選択中（送信しません）';throw new Error('ローカルLLMを選択してください。テスト用の健康データはOpenRouterへ送信しません。');}let cfg=await j('/api/config');el('aiTestTarget').textContent='Local / '+(s.model_path||'-')+' / CONTEXT '+(cfg.CONTEXT||'?')+' / 空きRAM '+Math.round((s.memory_available_bytes||0)/1048576)+' MiB';if(aiTestAbort.signal.aborted)throw Object.assign(new Error('cancelled'),{name:'AbortError'});el('aiTestState').textContent='ローカルAIで回答を生成しています…';let response=await fetch('/api/llm/local-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,system_prompt:el('aiTestSystem').value,max_tokens:maxTokens}),signal:aiTestAbort.signal});let raw=await response.text();if(!response.ok)throw new Error('HTTP '+response.status+': '+raw.slice(0,500));let data=JSON.parse(raw),choice=(data.choices||[])[0]||{},msg=choice.message||{};let content=typeof msg.content==='string'?msg.content:(Array.isArray(msg.content)?msg.content.filter(p=>p&&typeof p.text==='string').map(p=>p.text).join('\n'):'');if(!content.trim())throw new Error('AIから回答テキストが返りませんでした。');el('aiTestOutput').textContent=content;let use=data.usage||{},sec=((Date.now()-started)/1000).toFixed(1);el('aiTestMeta').textContent='処理時間 '+sec+'秒 / 入力 '+(use.prompt_tokens??'不明')+' tokens / 出力 '+(use.completion_tokens??'不明')+' tokens / 終了理由 '+(choice.finish_reason||'不明');el('aiTestState').textContent='完了しました。';}catch(e){el('aiTestState').textContent=e.name==='AbortError'?'テストを中止しました。':'テスト失敗: '+e.message;}finally{if(aiTestStartedMemWatch){await pollAiMemWatch();stopAiMemWatch();}aiTestBusy=false;aiTestAbort=null;el('aiTestRun').disabled=false;el('aiTestCancel').disabled=true;}}
 async function saveVoiceProfiles(){await putCfg(values(voiceKeys))}
 async function saveVoiceResponse(){await putCfg(values(['VOICE_REPLY_MAX_TOKENS','VOICE_REPLY_TEMPERATURE','VOICE_SYSTEM_PROMPT']))}
 async function selectModel(){let path=el('models').value;if(!path)return;try{await j('/api/models/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});el('modelSelectionState').textContent='使用モデルを変更しました。Load / Checkで読み込めます。';await refreshLocalModels(path);refresh()}catch(e){el('modelSelectionState').textContent='モデル選択に失敗: '+e.message}}
