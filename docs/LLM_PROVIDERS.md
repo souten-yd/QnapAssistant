@@ -315,7 +315,7 @@ SelfCare, other QPKGs and filesystem cache. At 16 GB installed RAM, the
 Q4/16K configuration is substantially more practical than on a 10 GB NAS,
 but installed capacity is not equal to `MemAvailable` and successful startup
 is not guaranteed. Approximate combined weight-file size and FP16 KV allocation
-are 5.03 GB + 2.25 GiB (about 7.3 GiB in aggregate), **before** runtime
+are 5.03 decimal GB + 2.25 GiB (about 6.9 GiB combined, or 7.45 decimal GB), **before** runtime
 buffers and QTS/application overhead. Inspect available RAM and startup logs;
 avoid depending on HDD swap for normal operation. If 16K cannot be sustained,
 reduce competing memory use or try a 4B model at 16K to retain the weekly
