@@ -268,6 +268,15 @@ Smaller alternatives are also available in the same selector, using Unsloth GGUF
 - [Qwen3-4B-Instruct-2507](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF): revision `18727206c51467496bfba014368bd0a30e97f411`, SHA-256 `3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`.
 - [Qwen3-1.7B](https://huggingface.co/unsloth/Qwen3-1.7B-GGUF): revision `bd59ef4c1c7af8b7ade0d473f3ab0d48b9f1d338`, SHA-256 `b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897`.
 
+**CPUs without AVX (TS-253Be / Celeron J3455):** the bundled llama.cpp is built for SSE4.2 only.
+On-device logs showed Qwen3-4B-Instruct-2507 Q4_K_M reading prompts at about 0.3 tok/s and generating
+at about 0.1 tok/s, while Qwen3-0.6B Q8_0 read at 9-16 tok/s. K-quants appear to lack a fast path
+without AVX. The selector therefore also offers **Qwen3-4B-Instruct-2507 Q4_0** from the same pinned
+Unsloth revision (`Qwen3-4B-Instruct-2507-Q4_0.gguf`, about 2.4 GB). Its SHA-256 is not yet pinned,
+so the preset leaves the hash empty and the download is not verified. Fill in the published hash
+from the Hugging Face file page before downloading if verification is required. Compare speeds
+with `llama-bench` on the NAS before relying on it for SelfCare nightly advice.
+
 For 4B Instruct, use Thinking **passthrough** (it is a non-thinking model); for 1.7B, start with Thinking **off** to limit response latency. Preset selection does not change this setting.
 
 ### Download status and model selection
