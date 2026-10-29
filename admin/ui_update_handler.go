@@ -16,5 +16,6 @@ func (m *manager) handleUpdateUI(w http.ResponseWriter, r *http.Request) {
 	html = injectOpenRouterFallbackUI(html)
 	html = injectOpenRouterVoiceHealthUI(html)
 	html = injectOpenRouterModelTableUI(html)
+	html = injectShellUI(html)
 	_, _ = io.WriteString(w, html)
 }

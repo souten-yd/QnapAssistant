@@ -46,6 +46,8 @@ type llmJob struct {
  completionTokens int
  finishReason string
  minMemoryAvailableBytes int64
+ loadStartedAt time.Time
+ readyAt time.Time
 }
 
 func (j *llmJob) terminal() bool {
@@ -118,8 +120,10 @@ func (m *manager) markJob(j *llmJob,state,code,msg string,result []byte){
  if j.terminal(){return}
  j.state=state;j.stageAt=time.Now()
  j.errorCode=code;j.errorMessage=msg
+ if state=="loading_model"&&j.loadStartedAt.IsZero(){j.loadStartedAt=j.stageAt}
+ if state=="ready"&&j.readyAt.IsZero(){j.readyAt=j.stageAt}
  if state=="completed"{j.result=result}
- if j.terminal(){j.finished=time.Now();j.request=nil}
+ if j.terminal(){j.finished=time.Now();j.request=nil;recentJobs.add(summarizeJob(j))}
 }
 
 func (m *manager) jobWorker(queue <-chan *llmJob){
@@ -254,7 +258,7 @@ func (m *manager) handleLLMJobs(w http.ResponseWriter,r *http.Request){
   _,_=w.Write(data);return
  }
  if r.Method==http.MethodDelete{
-  if !j.terminal(){j.cancel();j.state="cancelled";j.stageAt=time.Now();j.finished=j.stageAt;j.request=nil;j.errorCode="cancelled";j.errorMessage="cancelled by client"}
+  if !j.terminal(){j.cancel();j.state="cancelled";j.stageAt=time.Now();j.finished=j.stageAt;j.request=nil;j.errorCode="cancelled";j.errorMessage="cancelled by client";recentJobs.add(summarizeJob(j))}
   m.jobsMu.Unlock();writeJSON(w,map[string]any{"id":sub,"status":"cancelled"});return
  }
  if r.Method!=http.MethodGet{m.jobsMu.Unlock();http.Error(w,"GET or DELETE required",http.StatusMethodNotAllowed);return}
