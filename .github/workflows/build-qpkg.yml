@@ -27,7 +27,9 @@ env:
   LLAMA_CPP_COMMIT: 6d05498314db1b57f81c271080018aa2d0b89be9
   QDK_COMMIT: 78c77b898fecba8f860b630177248b5fa3f5baaf
   BASELINE_QPKG_RELEASE: "v0.5.5"
-  RUNTIME_CACHE_VERSION: "ts253be-sse42-static-v1"
+  RUNTIME_CACHE_VERSION: "ts253be-sse42-static-v2-sse-kquants"
+  # Runtime inside BASELINE_QPKG_RELEASE; reused only while it matches RUNTIME_CACHE_VERSION.
+  BASELINE_RUNTIME_VERSION: "ts253be-sse42-static-v1"
   SHERPA_ONNX_VERSION: "1.13.4"
   SHERPA_GO_LINUX_COMMIT: "a424c836679c18e71d7afcab293ea5ecf539044f"
   SHERPA_CACHE_VERSION: "ts253be-static-v1"
@@ -35,7 +37,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,10 +49,10 @@ jobs:
           path: |
             x86_64/bin/llama-server
             x86_64/bin/llama-bench
-          key: llama-${{ env.RUNTIME_CACHE_VERSION }}-${{ env.LLAMA_CPP_COMMIT }}
+          key: llama-${{ env.RUNTIME_CACHE_VERSION }}-${{ env.LLAMA_CPP_COMMIT }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/llama-patches/*.patch') }}
 
       - name: Reuse verified llama runtime from baseline QPKG
-        if: steps.llama-cache.outputs.cache-hit != 'true'
+        if: steps.llama-cache.outputs.cache-hit != 'true' && env.RUNTIME_CACHE_VERSION == env.BASELINE_RUNTIME_VERSION
         id: baseline
         continue-on-error: true
         env:
@@ -65,14 +67,15 @@ jobs:
           printf '%s  %s\n' "$expected" "$baseline" | sha256sum -c -
           ./scripts/bootstrap-llama-from-qpkg.sh .bootstrap
 
-      - name: Rebuild llama runtime only when explicitly allowed
-        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild == true
+      - name: Rebuild llama runtime when allowed or when the runtime version changed on purpose
+        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && (inputs.allow_llama_rebuild == true || env.RUNTIME_CACHE_VERSION != env.BASELINE_RUNTIME_VERSION)
         run: |
-          docker run --rm -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" -v "$PWD:/work" -w /work alpine:3.22 \
-            sh -lc 'apk add --no-cache bash build-base cmake ninja git linux-headers file && ./scripts/build-llama.sh'
+          # The container runs as root; hand the outputs back to the runner user so later strip/chmod steps work.
+          docker run --rm -e LLAMA_CPP_COMMIT="$LLAMA_CPP_COMMIT" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$PWD:/work" -w /work alpine:3.22 \
+            sh -lc 'apk add --no-cache bash build-base cmake ninja git linux-headers file && ./scripts/build-llama.sh && chown -R "$HOST_UID:$HOST_GID" x86_64 .build'
 
       - name: Refuse unexpected expensive llama rebuild
-        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild != true
+        if: steps.llama-cache.outputs.cache-hit != 'true' && steps.baseline.outcome != 'success' && inputs.allow_llama_rebuild != true && env.RUNTIME_CACHE_VERSION == env.BASELINE_RUNTIME_VERSION
         run: |
           echo "Pinned llama runtime cache/baseline unavailable; refusing automatic expensive rebuild." >&2
           exit 1

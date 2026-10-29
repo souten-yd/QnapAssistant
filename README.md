@@ -168,9 +168,17 @@ QNAP TS-253Be / Celeron J3455:
 
 OpenRouter追加機能は0.5で導入し、ネットワーク/API Key実機疎通はNAS上の `POST /api/openrouter/test` を使って確認します。
 
+## AVXなしCPU向けのllama.cpp改修（Q4_K / Q6_K）
+
+TS-253Be（Celeron J3455）はAVXを持たないため、標準のllama.cppではQ4_K/Q6_K（Q4_K_Mモデルの主な形式）の内積計算が逐次処理（スカラー）になります。`scripts/llama-patches/0001-*.patch` で、既存のAVX実装を128ビットのSSE4.1/SSSE3命令だけで書き直した経路を追加しています（AVX命令は使いません）。
+
+- 正しさ：llama.cppの `test-quantize-fns` をビルド時に実行し、参照実装との誤差が改修前と同一であることを確認。
+- 速度（SSE4.2のみのビルド、開発環境のCPUで `test-quantize-perf` の内積）：Q4_K 19.5→8.9 cycles/32値（約2.2倍）、Q6_K 23.4→11.3（約2.1倍）。
+- 実機での効果は `llama-bench` で確認してください（注意機構など他の処理もあるため、全体の速度向上はこれより小さくなります）。
+
 ## GitHub Actionsのコスト抑制
 
-通常CIでは **llama.cppを毎回再ビルドしません**。pinned runtimeをActions cacheから復元し、cache miss時のみ成功済みbaseline QPKG artifactを再利用します。それも無い場合は高コストな再ビルドを自動開始せずfail-fastします。sherpa-onnxもstatic dependencyをキャッシュします。
+通常CIでは **llama.cppを毎回再ビルドしません**（`RUNTIME_CACHE_VERSION` を意図的に変えたときだけ、一度だけ自動で再ビルドします）。pinned runtimeをActions cacheから復元し、cache miss時のみ成功済みbaseline QPKG artifactを再利用します。それも無い場合は高コストな再ビルドを自動開始せずfail-fastします。sherpa-onnxもstatic dependencyをキャッシュします。
 
 同じPRの古いrunは `concurrency` とActions APIでキャンセルし、docs/READMEだけの変更ではQPKG CIを起動しません。
 

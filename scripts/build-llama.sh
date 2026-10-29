@@ -12,6 +12,15 @@ mkdir -p "$ROOT/.build" "$DEST"
 git clone --filter=blob:none https://github.com/ggml-org/llama.cpp.git "$SRC"
 git -C "$SRC" checkout --detach "$LLAMA_CPP_COMMIT"
 
+# Local patches for the SSE4.2-only target (TS-253Be / Celeron J3455, no AVX).
+# 0001 adds SSE4.1/SSSE3 vec_dot paths for Q4_K and Q6_K, which otherwise fall back to scalar code.
+for patch in "$ROOT"/scripts/llama-patches/*.patch; do
+  [ -e "$patch" ] || continue
+  git -C "$SRC" apply --check "$patch"
+  git -C "$SRC" apply "$patch"
+  echo "Applied $(basename "$patch")"
+done
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
@@ -36,10 +45,13 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DGGML_HIP=OFF \
   -DGGML_VULKAN=OFF \
   -DLLAMA_CURL=OFF \
-  -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_OPENSSL=OFF \
+  -DLLAMA_BUILD_TESTS=ON \
   -DLLAMA_BUILD_EXAMPLES=OFF
 
-cmake --build "$BUILD" --target llama-server llama-bench -j"$(nproc)"
+cmake --build "$BUILD" --target llama-server llama-bench test-quantize-fns -j"$(nproc)"
+# Correctness of the patched quantized dot products (compares against the reference implementation).
+"$BUILD/bin/test-quantize-fns"
 cp "$BUILD/bin/llama-server" "$DEST/llama-server"
 cp "$BUILD/bin/llama-bench" "$DEST/llama-bench"
 chmod 0755 "$DEST/llama-server" "$DEST/llama-bench"
