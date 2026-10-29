@@ -102,9 +102,9 @@ func (m *manager) handleProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *manager) handleLogs(w http.ResponseWriter, r *http.Request) {
-	path := "/share/Public/QnapAssistant/llama-server.log"
+	path := llamaLogPath
 	if r.URL.Query().Get("target") == "admin" {
-		path = "/share/Public/QnapAssistant/admin.log"
+		path = adminLogPath
 	}
 	n, _ := strconv.Atoi(r.URL.Query().Get("lines"))
 	if n <= 0 || n > 2000 {

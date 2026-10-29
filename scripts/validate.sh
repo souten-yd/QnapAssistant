@@ -77,5 +77,6 @@ fi
 [ -f "$ROOT/icons/QnapAssistant_80.png" ] || { echo "QPKG 80px icon missing" >&2; exit 1; }
 node "$ROOT/scripts/test-local-model-ui.cjs"
 node "$ROOT/scripts/test-llm-playground-ui.cjs"
+node "$ROOT/scripts/test-shell-ui.cjs"
 (cd "$ROOT/admin" && go test ./... && go vet ./...)
 echo "Static validation passed."
