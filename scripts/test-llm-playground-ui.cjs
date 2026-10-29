@@ -14,7 +14,7 @@ const ids=[
   'aiMemChart','aiMemLine','aiMemDot','aiMemStart','aiMemStop','aiMemState'
 ];
 for(const id of ids)assert.match(src,new RegExp('id="'+id+'"'));
-assert.match(src,/\/api\/llm\/local-test/);
+assert.match(src,/\/api\/llm\/jobs/);
 assert.match(src,/\/api\/system\/memory/);
 const nodes=Object.fromEntries(ids.map(id=>[id,{
   value:'',textContent:'',disabled:false,attrs:{},
@@ -25,7 +25,7 @@ let provider='local',sent=[],responder,memQueue=[],memCounter=0,intervals=new Ma
 const gib=1073741824;
 const ctx={
   el:id=>nodes[id],
-  AbortController,Date,
+  AbortController,Date,setTimeout:(fn)=>{fn();return 0;},
   setInterval:(fn,delay)=>{assert.equal(delay,1000);intervals.set(++nextInterval,fn);return nextInterval;},
   clearInterval:id=>intervals.delete(id),
   j:async url=>{
@@ -67,16 +67,23 @@ vm.runInContext(selected,ctx);
   // Successful local inference auto-starts and stops memory sampling.
   provider='local';
   memQueue=[12,7,9];
-  responder=async()=>({ok:true,status:200,text:async()=>JSON.stringify({
-    choices:[{message:{content:'<script>not HTML</script>'},finish_reason:'stop'}],
-    usage:{prompt_tokens:321,completion_tokens:42}
-  })});
+  const ok=body=>({ok:true,status:200,text:async()=>JSON.stringify(body)});
+  const JOB='req_'+'a'.repeat(48);
+  let polls=0;
+  responder=async(url,opts)=>{
+    if(url==='/api/llm/jobs')return {ok:true,status:202,text:async()=>JSON.stringify({request_id:JOB,status:'queued'})};
+    if(url==='/api/llm/jobs/'+JOB)return ok({status:++polls<3?'generating':'completed'});   // long jobs are polled
+    if(url==='/api/llm/jobs/'+JOB+'/result')return ok({
+      choices:[{message:{content:'<script>not HTML</script>'},finish_reason:'stop'}],
+      usage:{prompt_tokens:321,completion_tokens:42}});
+    throw new Error('unexpected '+url);
+  };
   await ctx.runAiTest();
-  assert.equal(sent.length,1);
-  assert.equal(sent[0].url,'/api/llm/local-test');
+  assert.deepEqual(sent.map(s=>s.url),['/api/llm/jobs','/api/llm/jobs/'+JOB,'/api/llm/jobs/'+JOB,'/api/llm/jobs/'+JOB,'/api/llm/jobs/'+JOB+'/result']);
   const body=JSON.parse(sent[0].options.body);
   assert.equal(body.max_tokens,512);
-  assert.equal(body.prompt,nodes.aiTestInput.value);
+  assert.equal(body.messages.at(-1).content,nodes.aiTestInput.value);
+  assert.equal(body.messages.at(-1).role,'user');
   assert.equal(nodes.aiTestOutput.textContent,'<script>not HTML</script>');
   assert.match(nodes.aiTestMeta.textContent,/321 tokens/);
   assert.match(nodes.aiTestTarget.textContent,/CONTEXT 16384/);
@@ -108,21 +115,28 @@ vm.runInContext(selected,ctx);
   assert.match(nodes.aiMemLow.textContent,/2.00 GiB/);
   ctx.stopAiMemWatch();
 
-  // Backend error and cancellation remain available.
+  // Backend error, job failure and cancellation remain available.
   responder=async()=>({ok:false,status:503,text:async()=> 'model unavailable'});
   await ctx.runAiTest();
   assert.equal(nodes.aiTestOutput.textContent,'');
   assert.match(nodes.aiTestState.textContent,/HTTP 503/);
   assert.equal(intervals.size,0);
+  responder=async url=>url==='/api/llm/jobs'?{ok:true,status:202,text:async()=>JSON.stringify({request_id:JOB})}
+    :ok({status:'timed_out',error_code:'generation_first_token_timeout'});
+  await ctx.runAiTest();
+  assert.match(nodes.aiTestState.textContent,/時間切れ.*generation_first_token_timeout/);
 
   let arrived;
   const arrival=new Promise(resolve=>{arrived=resolve;});
-  responder=(_url,opts)=>new Promise((_resolve,reject)=>{
-    opts.signal.addEventListener('abort',()=>{
-      const e=new Error('cancelled');e.name='AbortError';reject(e);
+  sent=[];
+  responder=(url,opts)=>{
+    if(url==='/api/llm/jobs')return Promise.resolve({ok:true,status:202,text:async()=>JSON.stringify({request_id:JOB})});
+    if(opts&&opts.method==='DELETE')return Promise.resolve(ok({status:'cancelled'}));
+    return new Promise((_resolve,reject)=>{
+      opts.signal.addEventListener('abort',()=>{const e=new Error('cancelled');e.name='AbortError';reject(e);});
+      arrived();
     });
-    arrived();
-  });
+  };
   const inflight=ctx.runAiTest();
   await arrival;
   assert.equal(nodes.aiTestRun.disabled,true);
@@ -130,6 +144,7 @@ vm.runInContext(selected,ctx);
   ctx.cancelAiTest();
   await inflight;
   assert.match(nodes.aiTestState.textContent,/中止/);
+  assert.ok(sent.some(s=>s.url==='/api/llm/jobs/'+JOB&&s.options&&s.options.method==='DELETE'),'cancel deletes the server job');
   assert.equal(nodes.aiTestRun.disabled,false);
   assert.equal(nodes.aiTestCancel.disabled,true);
   assert.equal(intervals.size,0);
